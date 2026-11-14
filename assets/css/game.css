@@ -228,3 +228,4 @@ input[type=range]{width:100%;accent-color:#edbb74;min-height:28px}
  #game.playing-layout .score{font-size:30px}
  #game.playing-layout .combo{font-size:27px}
 }
+.load-error{position:relative;z-index:2;margin:16px 0 0;padding:10px 14px;max-width:640px;background:#2b1214;border:1px solid #c7352e;color:#f5e6d2;font-size:14px}

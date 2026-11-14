@@ -1,1 +1,1 @@
-Arquivos de áudio (.mp3) e imagens usados pelo jogo; manter caminhos em index.html.
+Áudio (.mp3), imagens e mapas (songs/*.json) usados pelo jogo.

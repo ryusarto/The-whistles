@@ -1,5 +1,16 @@
 # Histórico
 
+## V16 — Fase 0: base técnica (em desenvolvimento)
+
+- Mapas fora do `index.html`: cada música tem `assets/songs/<id>.json` no formato 2 (notas com tempo, pistas e duração; acordes como lista de pistas). O `index.html` caiu de 118 KB para 17 KB.
+- Envelope de energia e alinhamento das batidas de cada música passaram para os arquivos de mapa.
+- Código dividido em módulos ES: catálogo e formato dos mapas, relógio, recordes, regras de pontuação, julgamento das notas e controles.
+- Relógio da música suavizado: entre as atualizações do áudio o tempo avança pelo relógio do navegador, sem andar para trás nem contar o tempo pausado.
+- Cada toque é julgado no instante do próprio evento (teclado, toque e controle), não no quadro seguinte.
+- Dificuldades renomeadas internamente para `easy`, `medium` e `hard`, abrindo espaço para o Expert de cinco pistas. Os recordes já salvos continuam valendo.
+- Faixas importadas e salvas pela V15 são convertidas automaticamente ao abrir.
+- Testes importam o módulo real do jogo; 25 verificações, incluindo relógio e horário do evento.
+
 ## V15 — Mobile Stage
 
 - Removidos o modo ensaio, a seleção de velocidade, início por trecho e o pulo de introdução. As partidas tocam a faixa completa a 100%.
