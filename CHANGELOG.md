@@ -1,5 +1,16 @@
 # Histórico
 
+## V15 — Mobile Stage
+
+- Removidos o modo ensaio, a seleção de velocidade, início por trecho e o pulo de introdução. As partidas tocam a faixa completa a 100%.
+- Dificuldades apresentadas como Fácil, Médio e Difícil, com janelas de acerto progressivas.
+- Quatro botões de toque abaixo do palco na vertical e quatro áreas invisíveis nos cantos inferiores na horizontal.
+- Captura de múltiplos dedos, soltura por cancelamento, pausa e mudança de orientação; fontes de entrada compartilhadas sem acertos duplicados.
+- Pontuação progressiva de sustains, preservando os pontos anteriores à soltura.
+- Acorde completo conta uma vez para o combo; multiplicador calculado antes de avançar o combo.
+- Tabela de recordes V15 separada para a nova fórmula de pontuação; dados antigos preservados.
+- Removidos atalhos públicos de depuração que alteravam pontuação ou pulavam a música.
+
 ## V14 — Rehearsal & Stage
 
 - Ensaio em qualquer faixa e instrumento, inclusive Duo, com início selecionável e velocidades de 50% a 100%.

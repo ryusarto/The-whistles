@@ -9,10 +9,12 @@ function imFrom(tag){const im=new Image();im.src=tag==='franco-image'?'./assets/
 charSprites.franco=imFrom('franco-image');charSprites.ryuchi=imFrom('ryuchi-image');
 $('francoCard').src=charSprites.franco.src; $('ryuchiCard').src=charSprites.ryuchi.src;
 $('coverArt').src='./assets/images/capa.jpg';
-let screen='boot', chosen='franco', difficulty='normal', practice=false, notes=[], nextMiss=0, running=false, offset=0;
+let screen='boot', chosen='franco', difficulty='normal', notes=[], nextMiss=0, running=false, offset=0;
 let score=0,combo=0,bestCombo=0,perfect=0,good=0,misses=0,falsePresses=0, maxHits=0,crowd=76,power=0,powerEnd=0,activeHolds=[],particles=[],keys=new Set(),flash={text:'',until:0,color:'#fff'},streakNoticeUntil=0,streakNoticeValue=0,songReady=false,record=false;
 let lastHud=0, lastTime=0, pausePending=false, lastRendered=0;
-let sessionStart=0, sessionTraining=false, sessionSpeed=1, startRequest=0, overlayReturn='boot', resumeGraceUntil=0;
+let startRequest=0, overlayReturn='boot', resumeGraceUntil=0;
+const difficultyNames={easy:'FÁCIL',normal:'MÉDIO',expert:'DIFÍCIL'};
+const soloSources=Array.from({length:4},()=>new Set());
 const preferences={volume:.8,effects:matchMedia('(prefers-reduced-motion: reduce)').matches?'reduced':'full'};
 const fretGlow=new Float32Array(4), fretImpact=new Float32Array(4), fretPress=new Float32Array(4), fretDepth=new Float32Array(4);
 let impactCount=0;
@@ -31,8 +33,8 @@ let selectedTrack=catalog[0];
 const fmtNum=n=>Number(n||0).toLocaleString('pt-BR');
 const recordCache=new Map();
 function safeText(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
-function recordKey(track,artist,diff){return 'the-whistles-v5:record:'+track.id+':'+artist+':'+diff}
-function duoRecordKey(track,diff){return 'the-whistles-v11:duo:'+track.id+':'+diff}
+function recordKey(track,artist,diff){return 'the-whistles-v15:record:'+track.id+':'+artist+':'+diff}
+function duoRecordKey(track,diff){return 'the-whistles-v15:duo:'+track.id+':'+diff}
 function loadDuoRecord(track,diff){try{return JSON.parse(localStorage.getItem(duoRecordKey(track,diff))||'null')}catch(e){return null}}
 function saveDuoRecord(track,diff,rec){try{localStorage.setItem(duoRecordKey(track,diff),JSON.stringify(rec))}catch(e){console.warn('Recorde duo não pôde ser salvo',e)}}
 function setGameMode(mode){
@@ -68,8 +70,8 @@ function renderSetlist(){
  document.querySelectorAll('[data-select-character]').forEach(b=>b.classList.toggle('active',b.dataset.selectCharacter===chosen));
  const rows=gameMode==='duo'?['easy','normal','expert'].map(diff=>({diff,record:loadDuoRecord(selectedTrack,diff)})):allTrackRecords(selectedTrack,chosen);
  const best=rows.filter(r=>r.record).sort((a,b)=>(b.record.bestAccuracy||0)-(a.record.bestAccuracy||0));
- $('bestRecordBadge').textContent=best.length?(gameMode==='duo'?'DUO: ':'RECORDE: ')+best[0].record.bestAccuracy+'% • '+best[0].diff.toUpperCase():'NÃO JOGADO';
- $('setlistRecords').innerHTML=rows.map(({diff,record:r})=>'<div class="record-diff '+(diff===difficulty?'current':'')+'"><h4>'+diff.toUpperCase()+'</h4><b>'+(r?r.bestAccuracy+'%':'—')+'</b><div class="record-score">'+(r?fmtNum(r.bestScore)+' PTS':'SEM RECORDE')+'</div><div class="record-stars">'+(r?'★'.repeat(r.stars||0)+'☆'.repeat(5-(r.stars||0)):'☆☆☆☆☆')+'</div></div>').join('');
+ $('bestRecordBadge').textContent=best.length?(gameMode==='duo'?'DUO: ':'RECORDE: ')+best[0].record.bestAccuracy+'% • '+difficultyNames[best[0].diff]:'NÃO JOGADO';
+ $('setlistRecords').innerHTML=rows.map(({diff,record:r})=>'<div class="record-diff '+(diff===difficulty?'current':'')+'"><h4>'+difficultyNames[diff]+'</h4><b>'+(r?r.bestAccuracy+'%':'—')+'</b><div class="record-score">'+(r?fmtNum(r.bestScore)+' PTS':'SEM RECORDE')+'</div><div class="record-stars">'+(r?'★'.repeat(r.stars||0)+'☆'.repeat(5-(r.stars||0)):'☆☆☆☆☆')+'</div></div>').join('');
  $('recordNote').textContent=(gameMode==='duo'?'DUO LOCAL: Franco na guitarra à esquerda e Ryuchi no baixo à direita, com mapas diferentes tocados ao mesmo tempo. Conecte dois controles PS5 (primeiro = P1; segundo = P2) ou use teclados D F J K / Q W O P. L2 L1 R1 R2 tocam as notas. ✕ ativa o especial. ':'')+(selectedTrack.id==='minha-fonte'?'Minha Fonte: 80 BPM confirmado pelo metrônomo. Ryuchi acompanha a stem isolada de baixo; Franco acompanha as frases instrumentais da stem OTHER, sem usar a bateria como mapa. A stem OTHER não isola apenas a guitarra.':selectedTrack.id==='sem-tu'?'Sem Tu: 70 BPM confirmado pelo metrônomo. O baixo de Ryuchi foi mapeado pela stem isolada; a guitarra do Franco é uma interpretação da stem OTHER (contém outros timbres).':selectedTrack.id==='ruthless'?'Ruthless: baixo mapeado pela stem isolada; guitarra estimada na stem OTHER, que contém outros instrumentos. Recordes separados por dificuldade e personagem.':selectedTrack.provisional?'O mapa desta música foi criado automaticamente e precisa de revisão com stems. Os recordes são separados por instrumento e dificuldade.':'A guitarra e o baixo têm mapas diferentes. Recordes salvos separadamente por música, dificuldade e personagem neste navegador.');
 }
 function enterSetlist(){startRequest++;song.pause();running=false;clearInputs();show('setlist');renderSetlist()}
@@ -91,10 +93,15 @@ function audioBlob(){if(songReady)return;
 }
 // Prepare the real uploaded MP3 ahead of interaction; audio playback still starts only after click.
 setTimeout(()=>{try{audioBlob()}catch(e){console.error('Could not prepare embedded Nexus audio',e)}},100);
-function show(name){screen=name;document.querySelectorAll('.screen').forEach(e=>e.classList.toggle('active',e.id===name));$('playhud').style.display=(name==='playing'||name==='pause')?'block':'none';$('skipBtn').style.display=(name==='playing'&&(gameMode==='duo'?(activeTrack.id==='nexus'&&song.currentTime<24):((activeTrack.id==='nexus'&&song.currentTime<24)||(activeTrack.id==='ruthless'&&chosen==='franco'&&song.currentTime<32)||(activeTrack.id==='sem-tu'&&chosen==='ryuchi'&&song.currentTime<25))))?'block':'none';
- $('sessionBadge').style.display=name==='playing'?'block':'none';
+function show(name){
+ screen=name;
+ document.querySelectorAll('.screen').forEach(e=>e.classList.toggle('active',e.id===name));
+ $('playhud').style.display=(name==='playing'||name==='pause')?'block':'none';
+ $('shell').classList.toggle('is-playing',name==='playing');
+ $('shell').classList.toggle('is-paused',name==='pause');
+ $('shell').classList.toggle('duo-mode',gameMode==='duo');
+ $('game').classList.toggle('playing-layout',name==='playing'||name==='pause');
  $('touchPower2').style.display=gameMode==='duo'?'block':'none';
- $('sessionBadge').textContent=practice?'ENSAIO · '+Math.round(sessionSpeed*100)+'% · SEM GAME OVER':'';
  const focusTarget=name==='playing'?canvas:$(name)?.querySelector('button, input, select');
  if(focusTarget)focusTarget.focus({preventScroll:true});
 }
@@ -107,12 +114,44 @@ function updateSelection(){
  $('noteCount').textContent=gameMode==='duo'?('FRANCO: '+count+' notas · RYUCHI: '+activeTrack.charts.ryuchi[difficulty].reduce((n,x)=>n+(x[2]===1?2:1),0)+' notas · '+(activeTrack.bpm||'AUTO')+' BPM'):(count+' notas • '+instrument+' • '+(activeTrack.bpm||'AUTO')+' BPM');
  $('setupSongTitle').textContent=activeTrack.title+' ♪';$('setupSongMeta').textContent=activeTrack.provisional?'MAPA AUTOMÁTICO • EXPERIMENTAL':'THE WHISTLES • STEM CHART';
  $('playNow').textContent='PLAY '+activeTrack.title+' ►';
- $('soloPracticeBtn').style.display=(gameMode==='solo'&&activeTrack.id==='nexus'&&chosen==='franco')?'inline-block':'none';
 }
+// A chord is one streak event, even though each fret is judged independently.
 function compileNotes(chart){
  const all=[];
- for(const n of chart){all.push({t:n[0],lane:n[1],hold:n[2]===2?n[3]:0,hit:false,miss:false});if(n[2]===1)all.push({t:n[0],lane:(n[1]+2)%4,hold:0,hit:false,miss:false})}
+ for(const n of chart){
+  const group={size:n[2]===1?2:1,hits:0,missed:false,multiplier:0};
+  all.push({t:n[0],lane:n[1],hold:n[2]===2?n[3]:0,hit:false,miss:false,group});
+  if(n[2]===1)all.push({t:n[0],lane:(n[1]+2)%4,hold:0,hit:false,miss:false,group});
+ }
  return all.sort((a,b)=>a.t-b.t||a.lane-b.lane);
+}
+function beginHit(note,multiplier){
+ note.hit=true;
+ const group=note.group||(note.group={size:1,hits:0,missed:false,multiplier:0});
+ if(!group.hits)group.multiplier=multiplier;
+ group.hits++;
+ return {multiplier:group.multiplier,complete:!group.missed&&group.hits===group.size};
+}
+function missEvent(note){
+ note.miss=true;
+ if(note.group?.missed)return false;
+ if(note.group)note.group.missed=true;
+ return true;
+}
+// Award tail points as the audio advances. Releasing never removes points earned.
+function makeHold(note){return {note,end:note.t+note.hold,lane:note.lane,last:Math.max(note.t,now()),fraction:0}}
+function advanceHolds(holds,pressed,t,multiplier,award){
+ const pointsPerSecond=25*(activeTrack.bpm||120)/60;
+ for(let i=holds.length-1;i>=0;i--){
+  const h=holds[i],until=Math.min(t,h.end);
+  if(!pressed.has(h.lane)&&t<h.end-.10&&t>resumeGraceUntil){holds.splice(i,1);continue;}
+  if(until>h.last){
+   h.fraction+=(until-h.last)*pointsPerSecond*multiplier();
+   const points=Math.floor(h.fraction+1e-8);h.fraction-=points;h.last=until;
+   if(points)award(points);
+  }
+  if(t>=h.end){holds.splice(i,1);}
+ }
 }
 function makeDuoPlayer(artist,index){
  const all=compileNotes(activeTrack.charts[artist][difficulty]);
@@ -135,24 +174,24 @@ function duoRelease(p,lane,source){
  if(p.sources[lane].size===0)p.keys.delete(lane);
 }
 function clearDuoInputs(preserveHolds=false){for(const p of duoPlayers){p.keys.clear();for(const s of p.sources)s.clear();if(!preserveHolds)p.holds=[];p.depth.fill(0)}}
-function clearInputs(preserveHolds=false){soloKeyboardHeld.clear();soloPadHeld.clear();pointerTouches.clear();keys.clear();fretPress.fill(0);clearDuoInputs(preserveHolds);if(!preserveHolds)activeHolds=[];}
+function clearInputs(preserveHolds=false){soloKeyboardHeld.clear();soloPadHeld.clear();for(const sources of soloSources)sources.clear();pointerTouches.clear();document.querySelectorAll('[data-touch-lane]').forEach(b=>b.classList.remove('is-held'));keys.clear();fretPress.fill(0);clearDuoInputs(preserveHolds);if(!preserveHolds)activeHolds=[];}
 function duoFlash(p,text,color){p.flashText=text;p.flashColor=color;p.flashUntil=performance.now()+500}
 function duoRegisterHit(p,n,delta){
- n.hit=true;const a=Math.abs(delta)/sessionSpeed,tier=a<.06?'PERFECT':a<.118?'GREAT':'GOOD';
+ const event=beginHit(n,duoMultiplier(p));const a=Math.abs(delta),tier=a<.06?'PERFECT':a<.118?'GREAT':'GOOD';
  if(tier==='PERFECT')p.perfect++;else p.good++;
- p.combo++;p.bestCombo=Math.max(p.bestCombo,p.combo);
+ if(event.complete){p.combo++;p.bestCombo=Math.max(p.bestCombo,p.combo);}
  crowd=Math.min(100,crowd+(tier==='PERFECT'?.55:.40));
  p.power=Math.min(100,p.power+(tier==='PERFECT'?2.3:1.5));
- const gain=Math.round((tier==='PERFECT'?100:tier==='GREAT'?75:50)*duoMultiplier(p));
+ const gain=50*event.multiplier;
  p.score+=gain;score=duoPlayers[0].score+duoPlayers[1].score;
  p.glow[n.lane]=1;p.impact[n.lane]=1;
  if(p.particles.length>=12)p.particles.shift();p.particles.push({x:duoLaneX(n.lane,585,p.index),y:585,col:colors[n.lane],birth:performance.now(),tier,score:gain});
- if(n.hold>0)p.holds.push({note:n,end:n.t+n.hold,lane:n.lane});
+ if(n.hold>0)p.holds.push(makeHold(n));
  duoFlash(p,tier,tier==='PERFECT'?'#ffdf86':'#f3e9dc');
  updateHud(true);
 }
 function duoRegisterMiss(p,n){
- n.miss=true;p.misses++;p.combo=0;crowd=Math.max(0,crowd-(difficulty==='easy'?1.5:difficulty==='expert'?2.25:1.95));
+ if(n.hit||n.miss)return;p.misses++;if(!missEvent(n))return;p.combo=0;crowd=Math.max(0,crowd-(difficulty==='easy'?1.5:difficulty==='expert'?2.25:1.95));
  if(p.misses%2===0)duoFlash(p,'MISS','#fb6464');
  if(crowd<=0)failShow();
 }
@@ -161,7 +200,7 @@ function duoHitLane(p,lane){
  p.glow[lane]=Math.max(p.glow[lane],.32);
  for(let i=p.nextMiss;i<p.notes.length;i++){
   const n=p.notes[i];if(n.t>t+hitWindow())break;
-  if(n.hit||n.miss||n.skipped||n.lane!==lane)continue;
+  if(n.hit||n.miss||n.lane!==lane)continue;
   const delta=Math.abs(n.t-t);if(delta<best){best=delta;closest=n}
  }
  if(closest)duoRegisterHit(p,closest,t-closest.t);
@@ -173,8 +212,8 @@ function updateDuoMechanics(dt){
  if(screen!=='playing'||song.paused)return;
  const t=now();if(song.currentTime>=Math.max(0,(song.duration||activeTrack.duration)-.08)){song.pause();finishGame();return;}
  for(const p of duoPlayers){
-  while(p.nextMiss<p.notes.length){const n=p.notes[p.nextMiss];if(n.t>t-.19*sessionSpeed)break;if(!n.hit&&!n.miss&&!n.skipped)duoRegisterMiss(p,n);p.nextMiss++;if(screen!=='playing')return}
-  for(let i=p.holds.length-1;i>=0;i--){const h=p.holds[i];if(!p.keys.has(h.lane)&&t<h.end-.12&&t>resumeGraceUntil)p.holds.splice(i,1);else if(t>=h.end){p.score+=75*duoMultiplier(p);p.power=Math.min(100,p.power+3);p.holds.splice(i,1)}}
+  while(p.nextMiss<p.notes.length){const n=p.notes[p.nextMiss];if(n.t>t-hitWindow()-.015)break;if(!n.hit&&!n.miss)duoRegisterMiss(p,n);p.nextMiss++;if(screen!=='playing')return}
+  advanceHolds(p.holds,p.keys,t,()=>duoMultiplier(p),points=>{p.score+=points;hudDirty=true;});
  }
  score=duoPlayers.reduce((v,p)=>v+p.score,0);
  if(Math.floor(t*5)!==Math.floor(lastHud*5))updateHud();lastHud=t;
@@ -190,7 +229,6 @@ function updateDuoHud(){
  $('duoTeamStatus').textContent=(crowd<=25?'PERIGO • ':crowd>=75?'SHOW EM ALTA • ':'SHOW ESTÁVEL • ')+fmtNum(score)+' PTS';
  $('progress').style.width=(Math.min(100,song.currentTime/(song.duration||activeTrack.duration)*100)).toFixed(2)+'%';
  $('timeNow').textContent=fmtTime(song.currentTime);$('timeTotal').textContent=fmtTime(song.duration||activeTrack.duration);
- $('skipBtn').style.display=gameMode==='duo'&&activeTrack.id==='nexus'&&song.currentTime<24?'block':'none';
 }
 function finishDuo(){
  if(screen!=='playing')return;
@@ -205,7 +243,7 @@ function finishDuo(){
  $('finalCombo').textContent=Math.max(...duoPlayers.map(p=>p.bestCombo));
  $('resultsSongTitle').textContent=activeTrack.title+' · DUO!';
  let improved=false;
- if(!practice){
+ {
   const prev=loadDuoRecord(activeTrack,difficulty)||{};
   improved=accuracy>(prev.bestAccuracy||0)||score>(prev.bestScore||0);
   saveDuoRecord(activeTrack,difficulty,{bestAccuracy:Math.max(accuracy,prev.bestAccuracy||0),bestScore:Math.max(score,prev.bestScore||0),bestCombo:Math.max(...duoPlayers.map(p=>p.bestCombo),prev.bestCombo||0),stars:Math.max(starCount,prev.stars||0),plays:(prev.plays||0)+1,clears:(prev.clears||0)+1,lastPlayed:new Date().toISOString()});
@@ -213,23 +251,11 @@ function finishDuo(){
  for(const p of duoPlayers){const hit=p.perfect+p.good;const acc=p.maxHits+p.falsePresses?Math.round(hit/(p.maxHits+p.falsePresses)*100):0;
   $('duoResult'+p.index).innerHTML=p.name+' · '+(p.index===0?'GUITARRA':'BAIXO')+'<div><b>'+acc+'% · '+fmtNum(p.score)+' PTS</b></div><div>COMBO '+p.bestCombo+' · MISS '+p.misses+' · VAZIOS '+p.falsePresses+'</div>';
  }
- $('recordLine').textContent=practice?'TREINO / PULO DE INTRO — RECORDE NÃO SALVO':(improved?'NOVO RECORDE DA DUPLA! • ':'')+'Dois instrumentos · uma música · medidor da banda compartilhado.';
+ $('recordLine').textContent=(improved?'NOVO RECORDE DA DUPLA! • ':'')+'Dois instrumentos · uma música · medidor da banda compartilhado.';
  show('results');
 }
-function seekPractice(target){
- if(screen!=='playing')return;
- const t=Math.max(0,Math.min(target,(song.duration||activeTrack.duration)-.25));
- song.currentTime=t;practice=true;sessionTraining=true;sessionStart=t;
- clearInputs();
- if(gameMode==='duo'){
-  for(const p of duoPlayers){for(const n of p.notes)if(!n.hit&&!n.miss&&!n.skipped&&n.t<t-.175)n.skipped=true;while(p.nextMiss<p.notes.length&&(p.notes[p.nextMiss].hit||p.notes[p.nextMiss].miss||p.notes[p.nextMiss].skipped))p.nextMiss++;p.maxHits=p.notes.filter(n=>!n.skipped).length;}
-  maxHits=duoPlayers.reduce((n,p)=>n+p.maxHits,0);
- }else{for(const n of notes)if(!n.hit&&!n.miss&&!n.skipped&&n.t<t-.175)n.skipped=true;while(nextMiss<notes.length&&(notes[nextMiss].hit||notes[nextMiss].miss||notes[nextMiss].skipped))nextMiss++;maxHits=notes.filter(n=>!n.skipped).length;}
- show('playing');updateHud(true);
-}
-function skipDuoIntro(){if(activeTrack.id==='nexus')seekPractice(24.2)}
 function initChart(){notes=compileNotes(songChart());nextMiss=0;maxHits=notes.length;}
-function resetStats(){soloKeyboardHeld.clear();soloPadHeld.clear();pointerTouches.clear();score=0;combo=0;bestCombo=0;perfect=0;good=0;misses=0;falsePresses=0;crowd=76;power=0;powerEnd=0;streakNoticeUntil=0;streakNoticeValue=0;particles=[];keys.clear();fretGlow.fill(0);fretImpact.fill(0);fretPress.fill(0);fretDepth.fill(0);activeHolds=[];flash.until=0;lastHud=0;lastTime=0;}
+function resetStats(){clearInputs();score=0;combo=0;bestCombo=0;perfect=0;good=0;misses=0;falsePresses=0;crowd=76;power=0;powerEnd=0;streakNoticeUntil=0;streakNoticeValue=0;particles=[];keys.clear();fretGlow.fill(0);fretImpact.fill(0);fretPress.fill(0);fretDepth.fill(0);activeHolds=[];flash.until=0;lastHud=0;lastTime=0;}
 function enterSelection(){if(!song.paused)song.pause();show('setup');updateSelection()}
 $('startMenu').onclick=enterSetlist;
 document.querySelectorAll('.charcard').forEach(el=>el.onclick=()=>{
@@ -243,28 +269,21 @@ document.querySelectorAll('.diff').forEach(el=>el.onclick=()=>{
  document.querySelectorAll('.diff').forEach(a=>{a.classList.toggle('selected',a===el);a.setAttribute('aria-pressed',String(a===el))});
  updateSelection();
 });
-async function startGame(startAt=0,training=false,speed=1){
+async function startGame(){
  const request=++startRequest;
  try{
-  sessionStart=Math.max(0,Math.min(Number(startAt)||0,activeTrack.duration-.25));sessionTraining=training||sessionStart>0;sessionSpeed=sessionTraining?Math.max(.5,Math.min(1,Number(speed)||1)):1;
   $('audioError').style.display='none';show('loading');$('loadingMessage').textContent='Carregando '+activeTrack.title+'…';
   audioBlob();song.pause();
   const url=activeTrack.builtIn?(activeTrack.id==='minha-fonte'?minhaFonteAudioUrl:activeTrack.id==='sem-tu'?semTuAudioUrl:activeTrack.id==='ruthless'?ruthlessAudioUrl:activeTrack.id==='summertime'?summertimeAudioUrl:nexusAudioUrl):activeTrack.audioUrl;
   if(!url)throw new Error('Arquivo de áudio indisponível; importe a faixa novamente.');
   if(song.src!==new URL(url,document.baseURI).href){song.src=url;song.load()}
-  startAt=sessionStart;song.playbackRate=sessionSpeed;song.preservesPitch=true;
+  song.playbackRate=1;song.preservesPitch=true;
   if('webkitPreservesPitch' in song)song.webkitPreservesPitch=true;
   // Browsers may ignore a seek made before metadata arrives. Repeat it before playback.
-  if(song.readyState>=1)song.currentTime=startAt;
-  else song.addEventListener('loadedmetadata',()=>{if(request===startRequest)song.currentTime=startAt},{once:true});
-  resetStats();resumeGraceUntil=0;practice=sessionTraining;
-  if(gameMode==='duo'){
-   initDuoChart();
-   if(practice){for(const p of duoPlayers){while(p.nextMiss<p.notes.length&&p.notes[p.nextMiss].t<startAt-.17){p.notes[p.nextMiss].skipped=true;p.nextMiss++}p.maxHits=p.notes.length-p.nextMiss}maxHits=duoPlayers.reduce((n,p)=>n+p.maxHits,0)}
-  }else{
-   initChart();
-   if(practice){while(nextMiss<notes.length&&notes[nextMiss].t<startAt-.17){notes[nextMiss].skipped=true;nextMiss++}maxHits=notes.length-nextMiss}
-  }
+  if(song.readyState>=1)song.currentTime=0;
+  else song.addEventListener('loadedmetadata',()=>{if(request===startRequest)song.currentTime=0},{once:true});
+  resetStats();resumeGraceUntil=0;
+  if(gameMode==='duo')initDuoChart();else initChart();
   $('streakBanner').classList.remove('show');$('specialActive').classList.remove('show');
   $('hudTrack').textContent='THE WHISTLES / '+activeTrack.title;
   $('pauseTrackName').textContent=activeTrack.title;
@@ -276,12 +295,11 @@ async function startGame(startAt=0,training=false,speed=1){
   show('playing');running=true;updateHud(true);
  }catch(e){if(request!==startRequest)return;running=false;song.pause();show('pause');$('audioError').style.display='block';$('audioError').textContent='Não foi possível carregar ou reproduzir o áudio. Verifique a conexão e clique em RESUME. '+e.message;}
 }
-function restartSession(){return startGame(sessionStart,sessionTraining,sessionSpeed)}
-$('playNow').onclick=()=>startGame(0);$('againBtn').onclick=restartSession;$('selectBtn').onclick=enterSetlist;$('soloPracticeBtn').onclick=()=>startGame(54.8,true);
+function restartSession(){return startGame()}
+$('playNow').onclick=startGame;$('againBtn').onclick=restartSession;$('selectBtn').onclick=enterSetlist;
 function pauseGame(){if(screen!=='playing')return;song.pause();running=false;clearInputs(true);show('pause')}
-async function resumeGame(){if(screen!=='pause')return;const request=++startRequest;show('loading');try{if(song.readyState<1)song.addEventListener('loadedmetadata',()=>{if(request===startRequest)song.currentTime=sessionStart},{once:true});const p=song.play();if(p&&p.then)await p;if(request!==startRequest)return;if(document.hidden){song.pause();show('pause');return;}resumeGraceUntil=now()+.3;running=true;$('audioError').style.display='none';show('playing')}catch(e){if(request!==startRequest)return;show('pause');$('audioError').style.display='block';$('audioError').textContent='Não foi possível reproduzir o áudio: '+e.message}}
+async function resumeGame(){if(screen!=='pause')return;const request=++startRequest;show('loading');try{if(song.readyState<1)song.addEventListener('loadedmetadata',()=>{if(request===startRequest)song.currentTime=0},{once:true});const p=song.play();if(p&&p.then)await p;if(request!==startRequest)return;if(document.hidden){song.pause();show('pause');return;}resumeGraceUntil=now()+.3;running=true;$('audioError').style.display='none';show('playing')}catch(e){if(request!==startRequest)return;show('pause');$('audioError').style.display='block';$('audioError').textContent='Não foi possível reproduzir o áudio: '+e.message}}
 $('pauseBtn').onclick=pauseGame;$('resumeBtn').onclick=resumeGame;$('restartBtn').onclick=restartSession;$('menuBtn').onclick=enterSetlist;
-$('skipBtn').onclick=()=>{if(gameMode==='duo'){skipDuoIntro();return;}if(activeTrack.id==='nexus')seekPractice(24.2);else if(activeTrack.id==='ruthless'&&chosen==='franco')seekPractice(33.2);else if(activeTrack.id==='sem-tu'&&chosen==='ryuchi')seekPractice(25);};
 try { const savedOffset=Number(localStorage.getItem('whistles-nexus-v4-sync')||0);offset=Number.isFinite(savedOffset)?Math.max(-200,Math.min(200,savedOffset)):0; } catch(e) { offset=0; }
 $('offset').value=String(offset); $('offsetValue').textContent=(offset>0?'+':'')+offset+' ms';
 $('offset').oninput=()=>{offset=Number($('offset').value);$('offsetValue').textContent=(offset>0?'+':'')+offset+' ms';try{localStorage.setItem('whistles-nexus-v4-sync',String(offset))}catch(e){}};
@@ -291,36 +309,36 @@ function isSpecial(){return powerEnd>0 && now()<powerEnd}
 function totalMultiplier(){return comboMultiplier()*(isSpecial()?2:1)}
 function noticeStreak(value){streakNoticeValue=value;streakNoticeUntil=performance.now()+2400;$('streakValue').textContent=String(value);$('streakBanner').classList.add('show')}
 function failShow(){
- if(screen!=='playing'||practice)return;
- song.pause();running=false;keys.clear();activeHolds=[];clearDuoInputs();
+ if(screen!=='playing')return;
+ song.pause();running=false;clearInputs();
  $('failScore').textContent=score.toLocaleString('pt-BR');$('failMaxCombo').textContent=gameMode==='duo'?Math.max(...duoPlayers.map(p=>p.bestCombo)):bestCombo;
  $('streakBanner').classList.remove('show');$('specialActive').classList.remove('show');show('failed');
 }
 $('retryFailed').onclick=restartSession;$('menuFailed').onclick=enterSetlist;
 function showFlash(text,color){flash={text,color,until:performance.now()+520}}
 function registerHit(note,delta){
- note.hit=true;const a=Math.abs(delta)/sessionSpeed;const tier=a<.06?'PERFECT':a<.118?'GREAT':'GOOD';
+ const event=beginHit(note,totalMultiplier());const a=Math.abs(delta);const tier=a<.06?'PERFECT':a<.118?'GREAT':'GOOD';
  if(tier==='PERFECT')perfect++;else good++;
- combo++;bestCombo=Math.max(bestCombo,combo);crowd=Math.min(100,crowd+(tier==='PERFECT'?1.05:tier==='GREAT'?.82:.62));
- if(combo===50||combo===100||combo>=200&&combo%100===0)noticeStreak(combo);
+ if(event.complete){combo++;bestCombo=Math.max(bestCombo,combo);}crowd=Math.min(100,crowd+(tier==='PERFECT'?1.05:tier==='GREAT'?.82:.62));
+ if(event.complete&&(combo===50||combo===100||combo>=200&&combo%100===0))noticeStreak(combo);
  power=Math.min(100,power+(tier==='PERFECT'?2.3:1.5));
- const mul=totalMultiplier();
- score+=Math.round((tier==='PERFECT'?100:tier==='GREAT'?75:50)*mul);
+ const mul=event.multiplier;
+ score+=50*mul;
  showFlash(tier,tier==='PERFECT'?'#ffdf86':'#f2eee2');
  const t=performance.now();const x=laneX(note.lane,607);
- if(particles.length>=18)particles.shift();particles.push({x,y:607,col:colors[note.lane],birth:t,tier,score: Math.round((tier==='PERFECT'?100:tier==='GREAT'?75:50)*mul)});
+ if(particles.length>=18)particles.shift();particles.push({x,y:607,col:colors[note.lane],birth:t,tier,score: 50*mul});
  fretGlow[note.lane]=1;fretImpact[note.lane]=1;impactCount++;
- if(note.hold>0)activeHolds.push({note,end:note.t+note.hold,lane:note.lane});
+ if(note.hold>0)activeHolds.push(makeHold(note));
  updateHud(true)
 }
-function registerMiss(note){note.miss=true;misses++;combo=0;crowd=Math.max(0,crowd-(difficulty==='easy'?2.7:difficulty==='expert'?4.0:3.5));if(misses%2===0)showFlash('MISS','#e44a4a');if(crowd<=0)failShow()}
+function registerMiss(note){if(note.hit||note.miss)return;misses++;if(!missEvent(note))return;combo=0;crowd=Math.max(0,crowd-(difficulty==='easy'?2.7:difficulty==='expert'?4.0:3.5));if(misses%2===0)showFlash('MISS','#e44a4a');if(crowd<=0)failShow()}
 function hitLane(lane){
  if(screen!=='playing'||song.paused)return;
  const t=now();let closest=null,best=hitWindow();
  fretGlow[lane]=Math.max(fretGlow[lane],.32);fretPress[lane]=1;
  for(let i=nextMiss;i<notes.length;i++){
   const n=notes[i];if(n.t>t+hitWindow())break;
-  if(n.hit||n.miss||n.skipped||n.lane!==lane)continue;
+  if(n.hit||n.miss||n.lane!==lane)continue;
   const diff=Math.abs(n.t-t);if(diff<best){best=diff;closest=n}
  }
  if(closest){registerHit(closest,t-closest.t)}
@@ -329,8 +347,15 @@ function hitLane(lane){
 function activatePower(){if(screen!=='playing'||power<100||isSpecial())return;power=0;powerEnd=now()+12.0;showFlash('WHISTLE MODE ×2!', '#f2d2ff');updateHud(true)}
 const keyLanes={KeyD:0,KeyF:1,KeyJ:2,KeyK:3};
 const pointerTouches=new Map();
-function pressSoloPad(lane,index){if(screen!=='playing'||song.paused)return;soloPadHeld.add(lane);keys.add(lane);fretPress[lane]=1;fretDepth[lane]=Math.max(.22,fretDepth[lane]);hitLane(lane)}
-function releaseSoloPad(lane){soloPadHeld.delete(lane);if(!soloKeyboardHeld.has(lane)&&![...pointerTouches.values()].some(info=>!info.p&&info.lane===lane)){keys.delete(lane);fretPress[lane]=0}}
+function soloPress(lane,source){
+ if(screen!=='playing'||song.paused||soloSources[lane].has(source))return;
+ const held=soloSources[lane].size>0;
+ soloSources[lane].add(source);keys.add(lane);fretPress[lane]=1;fretDepth[lane]=Math.max(.22,fretDepth[lane]);
+ if(!held)hitLane(lane);
+}
+function soloRelease(lane,source){soloSources[lane].delete(source);if(!soloSources[lane].size){keys.delete(lane);fretPress[lane]=0}}
+function pressSoloPad(lane,index){soloPadHeld.add(lane);soloPress(lane,'pad')}
+function releaseSoloPad(lane){soloPadHeld.delete(lane);soloRelease(lane,'pad')}
 function getPads(){try{return navigator.getGamepads?Array.from(navigator.getGamepads()).filter(p=>p&&p.connected):[]}catch(e){return []}}
 function padPressed(p,button){const b=p.buttons&&p.buttons[button];return !!(b&&(b.pressed||b.value>.55))}
 function connectedPadForSlot(slot,pads=getPads()){return pads.find(p=>p.index===gamepadAssigned[slot])||null}
@@ -408,10 +433,10 @@ function menuGamepadAction(button){
  if(button===0){ // Cross / X
   if(screen==='boot')enterSetlist();
   else if(screen==='setlist'){activeTrack=selectedTrack;enterSelection()}
-  else if(screen==='setup')startGame(0);else if(screen==='results'||screen==='failed')restartSession();else if(screen==='help'||screen==='settings')closeOverlay();else if(screen==='rehearsal')$('startRehearsal').click();
+  else if(screen==='setup')startGame(0);else if(screen==='results'||screen==='failed')restartSession();else if(screen==='help'||screen==='settings')closeOverlay();
   else if(screen==='pause')resumeGame();
  }else if(button===1){ // Circle / O = back
-  if(screen==='help'||screen==='settings')closeOverlay();else if(screen==='rehearsal')show('setup');else if(screen==='loading')enterSetlist();else if(screen==='setlist'){$('setlistBack').click()}
+  if(screen==='help'||screen==='settings')closeOverlay();else if(screen==='loading')enterSetlist();else if(screen==='setlist'){$('setlistBack').click()}
   else if(screen==='setup')enterSetlist();
   else if(screen==='pause')enterSetlist();
  }else if(button===12||button===13){ // D-pad up/down
@@ -494,7 +519,7 @@ document.addEventListener('keydown',e=>{
  const k1=keyLanes[e.code],k2=coopKeyboard[1][e.code];
  if(['Space','ArrowUp','ArrowDown','Escape'].includes(e.code)||k1!==undefined||gameMode==='duo'&&k2!==undefined)e.preventDefault();
  if(e.repeat)return;
- if(e.code==='Escape'||(gameMode==='solo'&&e.code==='KeyP')){if(['help','settings'].includes(screen)){closeOverlay();return;}if(screen==='rehearsal'){show('setup');return;}if(screen==='loading'){enterSetlist();return;}if(screen==='controllers')closeControllerPanel();else if(screen==='playing')pauseGame();else if(screen==='pause')resumeGame();return}
+ if(e.code==='Escape'||(gameMode==='solo'&&e.code==='KeyP')){if(['help','settings'].includes(screen)){closeOverlay();return;}if(screen==='loading'){enterSetlist();return;}if(screen==='controllers')closeControllerPanel();else if(screen==='playing')pauseGame();else if(screen==='pause')resumeGame();return}
  if(screen==='boot'&&e.code==='Enter'){enterSetlist();return}
  if(screen==='setup'&&e.code==='Enter'){startGame();return}
  if(screen==='results'&&e.code==='Enter'){restartSession();return}
@@ -506,7 +531,7 @@ document.addEventListener('keydown',e=>{
   if(k2!==undefined)duoPress(duoPlayers[1],k2,'key:'+e.code);
  }else{
   if(e.code==='Space'){activatePower();return}
-  if(k1!==undefined){soloKeyboardHeld.add(k1);keys.add(k1);fretPress[k1]=1;fretDepth[k1]=Math.max(.22,fretDepth[k1]);hitLane(k1)}
+  if(k1!==undefined){soloKeyboardHeld.add(k1);soloPress(k1,'keyboard')}
  }
 });
 document.addEventListener('keyup',e=>{
@@ -514,26 +539,48 @@ document.addEventListener('keyup',e=>{
  if(gameMode==='duo'){
   if(k1!==undefined)duoRelease(duoPlayers[0],k1,'key:'+e.code);
   if(k2!==undefined)duoRelease(duoPlayers[1],k2,'key:'+e.code);
- }else if(k1!==undefined){soloKeyboardHeld.delete(k1);if(!soloPadHeld.has(k1)&&![...pointerTouches.values()].some(info=>!info.p&&info.lane===k1)){keys.delete(k1);fretPress[k1]=0}}
+ }else if(k1!==undefined){soloKeyboardHeld.delete(k1);soloRelease(k1,'keyboard')}
 });
+// The same captured pointer path serves visible portrait keys and invisible side zones.
+function touchPress(lane,pointerId,target,player=gameMode==='duo'?duoPlayers[0]:null){
+ if(screen!=='playing'||song.paused||pointerTouches.has(pointerId))return;
+ const source='pointer:'+pointerId;
+ pointerTouches.set(pointerId,{p:player,lane,source,target});
+ if(player)duoPress(player,lane,source);else soloPress(lane,source);
+ target.classList?.add('is-held');
+ try{target.setPointerCapture(pointerId)}catch(e){}
+}
+function releasePointer(e){
+ const info=pointerTouches.get(e.pointerId);if(!info)return;
+ pointerTouches.delete(e.pointerId);
+ if(info.p)duoRelease(info.p,info.lane,info.source);else soloRelease(info.lane,info.source);
+ if(![...pointerTouches.values()].some(p=>p.target===info.target))info.target.classList?.remove('is-held');
+}
+function bindTouchControls(){
+ document.querySelectorAll('[data-touch-lane]').forEach(button=>{
+  button.addEventListener('pointerdown',e=>{e.preventDefault();touchPress(Number(button.dataset.touchLane),e.pointerId,button)});
+  for(const type of ['pointerup','pointercancel','lostpointercapture'])button.addEventListener(type,releasePointer);
+  button.addEventListener('contextmenu',e=>e.preventDefault());
+ });
+}
+bindTouchControls();
 canvas.addEventListener('pointerdown',e=>{
  if(screen!=='playing')return;
+ e.preventDefault();
  const r=canvas.getBoundingClientRect(),x=(e.clientX-r.left)/r.width*1280,y=(e.clientY-r.top)/r.height*720;
  if(y<460)return;
  if(gameMode==='duo'){
   const slot=x<640?0:1,p=duoPlayers[slot];if(!p)return;
   const cx=slot===0?320:960,w=duoHW(y),lane=Math.floor((x-(cx-w/2))/(w/4));
-  if(lane>=0&&lane<4){const source='pointer:'+e.pointerId;duoPress(p,lane,source);pointerTouches.set(e.pointerId,{p,lane,source});try{canvas.setPointerCapture(e.pointerId)}catch(err){}}
+  if(lane>=0&&lane<4)touchPress(lane,e.pointerId,canvas,p);
  }else{
   const w=hw(y),lane=Math.floor((x-(640-w/2))/(w/4));
-  if(lane>=0&&lane<4){keys.add(lane);fretPress[lane]=1;fretDepth[lane]=Math.max(.22,fretDepth[lane]);hitLane(lane);pointerTouches.set(e.pointerId,{lane});try{canvas.setPointerCapture(e.pointerId)}catch(err){}}
+  if(lane>=0&&lane<4)touchPress(lane,e.pointerId,canvas,null);
  }
-},{passive:true});
-function releasePointer(e){const info=pointerTouches.get(e.pointerId);if(!info)return;pointerTouches.delete(e.pointerId);
- if(info.p)duoRelease(info.p,info.lane,info.source);
- else if(!soloKeyboardHeld.has(info.lane)&&!soloPadHeld.has(info.lane)&&![...pointerTouches.values()].some(p=>!p.p&&p.lane===info.lane)){keys.delete(info.lane);fretPress[info.lane]=0}
-}
-canvas.addEventListener('pointerup',releasePointer);canvas.addEventListener('pointercancel',releasePointer);canvas.addEventListener('lostpointercapture',releasePointer);
+},{passive:false});
+for(const type of ['pointerup','pointercancel','lostpointercapture'])canvas.addEventListener(type,releasePointer);
+window.addEventListener('resize',()=>clearInputs(true));
+window.addEventListener('orientationchange',()=>{if(screen==='playing')pauseGame();else clearInputs(true)});
 song.addEventListener('ended',finishGame);
 document.addEventListener('visibilitychange',()=>{if(document.hidden&&screen==='playing')pauseGame()});
 window.addEventListener('blur',()=>{if(screen==='playing')pauseGame()});
@@ -548,18 +595,35 @@ function finishGame(){
  $('finalScore').textContent=fmtNum(score);$('finalAcc').textContent=accuracy+'%';$('finalCombo').textContent=bestCombo;
  $('resultsSongTitle').textContent=activeTrack.title+' FINISHED!';
  let newRecord=false;
- if(!practice){const prev=loadRecord(activeTrack,chosen,difficulty)||{};
+ {const prev=loadRecord(activeTrack,chosen,difficulty)||{};
    newRecord=accuracy>(prev.bestAccuracy||0)||score>(prev.bestScore||0);
    const data={bestAccuracy:Math.max(accuracy,prev.bestAccuracy||0),bestScore:Math.max(score,prev.bestScore||0),bestCombo:Math.max(bestCombo,prev.bestCombo||0),stars:Math.max(starCount,prev.stars||0),plays:(prev.plays||0)+1,clears:(prev.clears||0)+1,lastDifficulty:difficulty,lastPlayed:new Date().toISOString()};
    saveRecord(activeTrack,chosen,difficulty,data);
  }
- $('recordLine').textContent=practice?'MODO TREINO — resultado não foi salvo.':(newRecord?'NOVO RECORDE! • ':'')+'Perfect: '+perfect+' • Great/Good: '+good+' • Miss: '+misses+' • Apertos vazios: '+falsePresses;
+ $('recordLine').textContent=(newRecord?'NOVO RECORDE! • ':'')+'Perfect: '+perfect+' • Great/Good: '+good+' • Miss: '+misses+' • Apertos vazios: '+falsePresses;
  show('results');
 }
 function updateMechanics(dt){
- if(gameMode==='duo'){updateDuoMechanics(dt);return}
- for(let q=0;q<4;q++){fretGlow[q]=Math.max(0,fretGlow[q]-dt*2.5);fretImpact[q]=Math.max(0,fretImpact[q]-dt*4.0);const target=keys.has(q)?1:0;const speed=keys.has(q)?35:18;fretDepth[q]+= (target-fretDepth[q])*(1-Math.exp(-speed*dt));}
- if(screen!=='playing'||song.paused)return;const t=now();if(song.currentTime>=Math.max(0,(song.duration||activeTrack.duration)-.08)){song.pause();finishGame();return;}while(nextMiss<notes.length){const n=notes[nextMiss];if(n.t>t-.19*sessionSpeed)break;if(!n.hit&&!n.miss&&!n.skipped)registerMiss(n);nextMiss++;if(screen!=='playing')return;}for(let i=activeHolds.length-1;i>=0;i--){const h=activeHolds[i];if(!keys.has(h.lane)&&t<h.end-.12&&t>resumeGraceUntil){activeHolds.splice(i,1)}else if(t>=h.end){score+=75*totalMultiplier();power=Math.min(100,power+3);activeHolds.splice(i,1)}}if(t>=powerEnd&&powerEnd!==0){powerEnd=0}if(Math.floor(t*5)!==Math.floor(lastHud*5))updateHud();lastHud=t}
+ if(gameMode==='duo'){updateDuoMechanics(dt);return;}
+ for(let q=0;q<4;q++){
+  fretGlow[q]=Math.max(0,fretGlow[q]-dt*2.5);
+  fretImpact[q]=Math.max(0,fretImpact[q]-dt*4);
+  const down=keys.has(q),target=Number(down);
+  fretDepth[q]+=(target-fretDepth[q])*(1-Math.exp(-(down?35:18)*dt));
+ }
+ if(screen!=='playing'||song.paused)return;
+ const t=now();
+ if(song.currentTime>=Math.max(0,(song.duration||activeTrack.duration)-.08)){song.pause();finishGame();return;}
+ while(nextMiss<notes.length){
+  const n=notes[nextMiss];if(n.t>t-hitWindow()-.015)break;
+  if(!n.hit&&!n.miss)registerMiss(n);
+  nextMiss++;if(screen!=='playing')return;
+ }
+ advanceHolds(activeHolds,keys,t,totalMultiplier,points=>{score+=points;hudDirty=true;});
+ if(t>=powerEnd&&powerEnd!==0)powerEnd=0;
+ if(Math.floor(t*5)!==Math.floor(lastHud*5))updateHud();
+ lastHud=t;
+}
 let hudDirty=true,lastHudPaint=-Infinity;
 function updateHud(force=false){
  hudDirty=true;
@@ -580,7 +644,6 @@ function paintHud(){
  $('powerNumber').textContent=isSpecial()?'ATIVO':power>=100?'PRONTO!':Math.floor(power)+'%';
  $('progress').style.width=(Math.min(100,song.currentTime/(song.duration||activeTrack.duration)*100)).toFixed(2)+'%';
  $('timeNow').textContent=fmtTime(song.currentTime);$('timeTotal').textContent=fmtTime(song.duration||activeTrack.duration);
- $('skipBtn').style.display=((activeTrack.id==='nexus'&&song.currentTime<24)||(activeTrack.id==='ruthless'&&chosen==='franco'&&song.currentTime<32)||(activeTrack.id==='sem-tu'&&chosen==='ryuchi'&&song.currentTime<25))?'block':'none';
  const f=performance.now();$('toast').classList.toggle('show',f<flash.until);
  $('toast').textContent=flash.text;$('toast').style.color=flash.color;
  $('streakBanner').classList.toggle('show',f<streakNoticeUntil);
@@ -641,8 +704,8 @@ function laneX(lane,y){return 640+(lane-1.5)*hw(y)/4}
 // Rhythm highway V4 — all positions are computed from the AUDIO clock; no frame-step drift.
 // V3: raised, metal-rimmed fret keys, physical press animation, and instrumental note discs.
 const travelSeconds=2.24;
-function travelTime(){return travelSeconds*sessionSpeed}
-function hitWindow(){return .175*sessionSpeed}
+function travelTime(){return travelSeconds}
+function hitWindow(){return {easy:.19,normal:.16,expert:.135}[difficulty]}
 function noteXY(n,t){
  const top=154,hit=605,p=1-(n.t-t)/travelTime();
  if(p<-.04||p>1.12)return null;
@@ -803,7 +866,7 @@ function renderDuoHighway(p,t,ms){
  for(let i=p.nextMiss;i<p.notes.length;i++){
   const n=p.notes[i],dt=n.t-t;
   if(dt>travelTime()+.06)break;
-  if(dt<-.23||n.hit||n.miss||n.skipped)continue;
+  if(dt<-.23||n.hit||n.miss)continue;
   visible.push(n);
  }
  for(let i=visible.length-1;i>=0;i--){
@@ -867,7 +930,7 @@ function renderHighway(t,ms){
  const visible=[];
  for(let i=nextMiss;i<notes.length;i++){
   const n=notes[i],dt=n.t-t;if(dt>travelTime()+.06)break;
-  if(dt<-.25||n.hit||n.miss||n.skipped)continue;visible.push(n);
+  if(dt<-.25||n.hit||n.miss)continue;visible.push(n);
  }
  for(let i=visible.length-1;i>=0;i--){
   const n=visible[i],shape=noteXY(n,t);if(!shape)continue;
@@ -983,14 +1046,15 @@ document.querySelectorAll('[data-open-settings]').forEach(b=>b.onclick=()=>openO
 $('closeHelp').onclick=closeOverlay;$('closeSettings').onclick=closeOverlay;
 $('volume').oninput=()=>{preferences.volume=Number($('volume').value)/100;applyPreferences();savePreferences()};
 $('visualEffects').onchange=()=>{preferences.effects=$('visualEffects').value;applyPreferences();savePreferences()};
-$('openRehearsal').onclick=()=>{$('rehearsalTrack').textContent=activeTrack.title+' · '+(gameMode==='duo'?'DUO · GUITARRA + BAIXO':chosen==='franco'?'FRANCO · GUITARRA':'RYUCHI · BAIXO')+' · '+difficulty.toUpperCase();$('practiceStart').max=String(Math.max(0,Math.floor(activeTrack.duration-3)));$('practiceStart').value='0';$('practiceStartValue').textContent='00:00';show('rehearsal')};
-$('practiceStart').oninput=()=>{$('practiceStartValue').textContent=fmtTime(Number($('practiceStart').value))};
-$('startRehearsal').onclick=()=>startGame(Number($('practiceStart').value),true,Number($('practiceSpeed').value));
-$('closeRehearsal').onclick=()=>show('setup');$('cancelLoading').onclick=enterSetlist;
+$('cancelLoading').onclick=enterSetlist;
 $('touchPower1').onclick=()=>{if(gameMode==='duo')duoActivatePower(duoPlayers[0]);else activatePower()};
 $('touchPower2').onclick=()=>duoActivatePower(duoPlayers[1]);
 
 window.whistlesPerformanceDebug={getCache:()=>({notes:noteDiscSprites.size,pads:fretPadSprites.size,stageBufferTime,stageBufferKey}),reset:()=>{noteDiscSprites.clear();fretPadSprites.clear();stageBufferTime=-Infinity;hudDirty=true;}};
 window.whistlesControllerDebug={getPads:()=>getPads().map(p=>({index:p.index,id:p.id,mapping:p.mapping})),getAssigned:()=>gamepadAssigned.slice(),pair:(idx,slot)=>assignPad(idx,slot),open:openControllerPanel};
-window.whistlesDebug={getDuoState:()=>({mode:gameMode,crowd,assigned:gamepadAssigned.slice(),players:duoPlayers.map(p=>({artist:p.artist,score:p.score,combo:p.combo,hits:p.perfect+p.good,misses:p.misses,falsePresses:p.falsePresses,notes:p.notes.length,nextMiss:p.nextMiss,power:p.power}))}),setMode:setGameMode,getState:()=>({mode:gameMode,screen,chosen,difficulty,activeTrack:activeTrack.id,selectedTrack:selectedTrack.id,practice,score,combo,notes:notes.length,time:song.currentTime,duration:song.duration,loaded:songReady,firstNote:notes.length?notes[0].t:null,perfect,good,misses,falsePresses,impactCount,offset,crowd,power,powerEnd,multiplier:totalMultiplier(),streakNoticeValue,firstLanes:notes.slice(0,8).map(n=>n.lane),depths:Array.from(fretDepth),pressed:Array.from(keys)}),skipTo:(t)=>{if(screen==='playing'){song.currentTime=t;while(nextMiss<notes.length&&notes[nextMiss].t<t-.2){notes[nextMiss].skipped=true;nextMiss++}}},testSet:(obj)=>{if('crowd'in obj)crowd=obj.crowd;if('power'in obj)power=obj.power;if('combo'in obj)combo=obj.combo;if('powerEnd'in obj)powerEnd=obj.powerEnd;updateHud(true)},testMiss:()=>{const n=notes.find(x=>!x.hit&&!x.miss);if(n){registerMiss(n);updateHud(true)}},testComplete:()=>{if(screen==='playing'){song.pause();finishGame()}},testSaveRecord:(acc=87)=>{saveRecord(activeTrack,chosen,difficulty,{bestAccuracy:acc,bestScore:124500,stars:4,plays:1,clears:1});renderSetlist()},getSoloNotes:()=>activeTrack.charts.franco.normal.filter(n=>n[0]>=57.7&&n[0]<=63.2),getNexusSecondSolo:()=>chartBank.franco.normal.filter(n=>n[0]>=100&&n[0]<=105),getCatalog:()=>catalog.map(t=>({id:t.id,title:t.title,bpm:t.bpm,duration:t.duration,counts:Object.fromEntries(Object.entries(t.charts).map(([c,v])=>[c,Object.fromEntries(Object.entries(v).map(([d,n])=>[d,n.length]))]))}))};
+window.whistlesDebug={
+ getState:()=>({mode:gameMode,screen,chosen,difficulty,activeTrack:activeTrack.id,score,combo,time:song.currentTime,perfect,good,misses,falsePresses,crowd,power,multiplier:totalMultiplier()}),
+ getDuoState:()=>({mode:gameMode,players:duoPlayers.map(p=>({artist:p.artist,score:p.score,combo:p.combo,hits:p.perfect+p.good,misses:p.misses}))}),
+ getCatalog:()=>catalog.map(t=>({id:t.id,title:t.title,bpm:t.bpm,duration:t.duration,counts:Object.fromEntries(Object.entries(t.charts).map(([c,v])=>[c,Object.fromEntries(Object.entries(v).map(([d,n])=>[d,n.length]))]))}))
+};
 })();

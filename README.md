@@ -1,64 +1,68 @@
 # THE WHISTLES 🎸
 
-Jogo de ritmo de guitarra e baixo, inspirado na era PS2. **V14 — Rehearsal & Stage.**
+Jogo de ritmo de guitarra e baixo, inspirado na era PS2. **V15 — Mobile Stage.**
 
 **[Jogar no navegador](https://ryusarto.github.io/The-whistles/)**
 
-## O que está no jogo
+## Jogar
 
-- Cinco músicas completas: Nexus, Summertime, Ruthless, Sem Tu e Minha Fonte.
-- Franco na guitarra e Ryuchi no baixo, com mapas próprios em Easy, Normal e Expert.
-- Solo e Duo Local com pistas, combos, pontuação e especiais independentes. No Duo, a energia da plateia é compartilhada.
-- Ensaio para qualquer música: início em qualquer segundo, velocidade de 50%, 75%, 90% ou 100%, sem eliminação e sem salvar recordes. Reiniciar mantém trecho e velocidade.
-- Guia de controles, volume persistente, calibração e opção de reduzir efeitos.
-- Recordes por música, instrumento e dificuldade; recordes do Duo separados dos do Solo, salvos no navegador.
-- Importação local de áudio com mapas automáticos provisórios e armazenamento no navegador quando disponível.
+Escolha uma das cinco faixas, guitarra (Franco) ou baixo (Ryuchi), e a dificuldade **Fácil, Médio ou Difícil**. Cada partida toca a música completa, do início, na velocidade original. Não há modo treino.
+
+- Nexus, Summertime, Ruthless, Sem Tu e Minha Fonte.
+- Mapas separados para guitarra e baixo, em cada dificuldade.
+- Solo e Duo Local: pistas, combos e especiais independentes; energia da plateia compartilhada no Duo.
+- Notas longas dão pontos enquanto são sustentadas. Soltar antes do fim interrompe os próximos pontos e mantém os já conquistados.
+- Acordes completos contam como um evento de combo. Multiplicador sobe a cada dez eventos acertados, até ×4; Whistle Mode dobra até ×8.
+- As janelas de acerto ficam progressivamente mais exigentes em Fácil, Médio e Difícil.
 
 ## Controles
 
-| Ação | Teclado Solo / P1 | Teclado P2 | DualSense |
+| Ação | Solo / Jogador 1 | Jogador 2 | DualSense |
 | --- | --- | --- | --- |
 | Pistas 1–4 | D F J K | Q W O P | L2 L1 R1 R2 |
 | Especial | Espaço | Enter | ✕ |
 | Pausa | Esc | Esc | Options |
 
-Toque na pista para jogar na tela sensível ao toque; os botões **Especial P1/P2** ativam o Whistle Mode. Notas longas exigem segurar; acordes exigem as duas pistas ao mesmo tempo. Recomendamos a orientação horizontal no celular.
+**Celular na vertical:** quatro botões coloridos na área abaixo do palco. **Na horizontal:** quatro áreas invisíveis na parte inferior das laterais — pistas 1 e 2 à esquerda, 3 e 4 à direita. A ordem acompanha as notas, da esquerda para a direita. É possível tocar acordes com vários dedos e segurar notas longas. Esses quatro controles comandam o instrumento selecionado no Solo ou o jogador 1 no Duo; o jogador 2 usa teclado ou controle.
 
-Conecte até dois controles por USB ou Bluetooth e pressione um botão para o navegador detectá-los. O painel **Testar controles** permite vincular P1/P2 e conferir os quatro gatilhos. O suporte depende do navegador e do mapeamento do controle. Não requer instalação nem conta.
+Os botões **Especial P1/P2** ativam o Whistle Mode quando a barra está cheia. Volume, efeitos e calibração são ajustáveis. Pausar, perder o foco ou mudar a orientação solta os botões, evitando notas presas.
+
+Conecte até dois controles por USB ou Bluetooth e pressione um botão para o navegador detectá-los. **Testar controles** permite vincular P1/P2 e conferir os quatro gatilhos. A compatibilidade depende do navegador e do mapeamento do controle.
+
+## Recordes
+
+Os recordes ficam no navegador, separados por faixa, dificuldade, instrumento e modo Solo/Duo. A V15 tem uma tabela própria porque a fórmula de pontos mudou. Os dados antigos continuam armazenados, sem misturar pontuações calculadas por regras diferentes.
 
 ## Desenvolvimento local
 
-Sem build, npm ou dependências. Python 3.10+:
+Sem build ou dependências. Python 3.10+:
 
 ```sh
 python3 tools/serve.py
 ```
 
-Abra http://127.0.0.1:8765/. O servidor implementa requisições HTTP Range para que o ensaio possa avançar no MP3. Abrir por `file://` ou usar um servidor sem suporte a Range pode impedir o avanço de áudio em alguns navegadores.
-
-Para os testes de integração, Node.js 20+:
+Abra http://127.0.0.1:8765/. O servidor oferece HTTP Range para áudio. Para os testes do motor, Node.js 20+:
 
 ```sh
 node tests/regression.mjs
 ```
 
-Os testes usam o motor real com relógio de mídia simulado, cobrindo os 30 mapas, Solo/Duo, exclusão das notas puladas, ensaio, recordes, pausa/sustains, cancelamento de carregamento, falha de reprodução e renderização. O teste automatizado não substitui uma conferência com controles físicos.
+Os testes usam o código real com mídia e entradas simuladas. A verificação de layout no navegador complementa esses testes; aparelhos e controles físicos exigem uma conferência no dispositivo.
 
-## Estrutura e GitHub Pages
+## Arquivos e publicação
 
-- `index.html`: telas e dados dos mapas/envelopes originais.
-- `assets/js/game.js`: motor, controles, áudio, ensaio e recordes.
-- `assets/css/game.css`: interface e layouts responsivos.
-- `assets/audio/`: cinco MP3 completos.
-- `assets/images/`: capa e personagens.
+- `index.html`: telas e mapas instrumentais.
+- `assets/js/game.js`: motor, toque, teclado, controles, áudio e recordes.
+- `assets/css/game.css`: layout e áreas de toque por orientação.
+- `assets/audio/` e `assets/images/`: músicas e arte do The Whistles.
 - `tests/regression.mjs`: testes sem dependências.
-- `tools/serve.py`: servidor local com suporte a áudio.
+- `tools/serve.py`: servidor local.
 
-Pages publica a branch **main**, pasta **/(root)**. A entrada é `index.html`; todos os caminhos são relativos e funcionam em `/The-whistles/`. `.nojekyll` evita processamento Jekyll. Ao atualizar a branch, acompanhe o workflow **pages build and deployment** na aba Actions.
+GitHub Pages publica **main**, pasta **/(root)**. Todos os caminhos são relativos para funcionar em `/The-whistles/`. Acompanhe **pages build and deployment** na aba Actions depois de cada atualização.
 
-## Sobre os mapas
+## Mapas e referências
 
-Os mapas instrumentais e o áudio da V13 foram preservados nesta atualização. Algumas partes de guitarra foram interpretadas a partir da stem OTHER, que contém outros timbres; faixas importadas recebem mapas automáticos e precisam de revisão musical. V14 não representa uma nova transcrição instrumental das músicas.
+Os mapas e áudios instrumentais existentes foram preservados. Algumas partes de guitarra interpretam a stem OTHER, que inclui outros timbres; músicas importadas recebem mapas automáticos provisórios. As regras do motor são implementadas em JavaScript para o The Whistles. A imagem de disco comercial e seus arquivos extraídos não fazem parte deste repositório.
 
 ## Créditos
 
