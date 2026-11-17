@@ -158,5 +158,58 @@ await check('Presses are judged at the input event time, not at the next frame',
   assert.equal(q?q.perfect:u.api.state().perfect,1,mode+': the event timestamp makes the same press PERFECT');
  }
 });
+await check('Hit windows accept earlier presses than late ones at every difficulty',async()=>{
+ const {HIT_WINDOWS}=await import(new URL('assets/js/rules/scoring.js',root).href);
+ for(const [diff,win] of Object.entries(HIT_WINDOWS)){
+  assert.ok(win.early>win.late,diff+': early side is wider');
+  for(const [offset,expectHit] of [[-(win.early-.005),true],[win.late-.005,true],[-(win.early+.01),false],[win.late+.01,false]]){
+   const t=await boot();t.api.configure({difficulty:diff});await t.api.startGame();chart(t,[[1,0,0,0]]);t.song.currentTime=1+offset;key(t,'keydown','KeyD');
+   const s=t.api.state();assert.equal(s.perfect+s.good,expectHit?1:0,`${diff} press at ${offset.toFixed(3)} s`);assert.equal(s.falsePresses,expectHit?0:1);
+  }
+ }
+ const easy=(await import(new URL('assets/js/rules/scoring.js',root).href)).HIT_WINDOWS;assert.ok(easy.easy.early>easy.medium.early&&easy.medium.early>easy.hard.early,'windows tighten with difficulty');
+});
+async function classicSolo(rows){const t=await boot();t.api.preferences.inputMode='classic';await t.api.startGame();const n=chart(t,rows);return {t,n};}
+await check('Classic mode: frets alone do not play, a strum plays the held frets',async()=>{
+ let {t}=await classicSolo([[1,0,0,0]]);t.song.currentTime=1;key(t,'keydown','KeyA');assert.equal(t.api.state().perfect,0);assert.equal(t.api.state().falsePresses,0);
+ key(t,'keydown','ArrowDown');assert.equal(t.api.state().perfect,1);assert.equal(t.api.state().combo,1);
+ ({t}=await classicSolo([[1,0,0,0]]));t.song.currentTime=1;key(t,'keydown','KeyD');assert.equal(t.api.state().perfect,0,'tap keys are not frets in Classic');
+});
+await check('Classic mode: single notes allow lower anchored frets, chords need exact frets',async()=>{
+ let {t}=await classicSolo([[1,2,0,0]]);t.song.currentTime=1;key(t,'keydown','KeyA');key(t,'keydown','KeyD');key(t,'keydown','ArrowUp');assert.equal(t.api.state().perfect,1,'anchor below is fine');
+ ({t}=await classicSolo([[1,2,0,0]]));t.song.currentTime=1;key(t,'keydown','KeyD');key(t,'keydown','KeyF');key(t,'keydown','ArrowUp');assert.equal(t.api.state().perfect,0,'a higher fret blocks the note');
+ t.song.currentTime=1.1;t.api.updateMechanics(.016);assert.equal(t.api.state().falsePresses,1,'the unresolved strum becomes an empty strum');assert.equal(t.api.state().combo,0);
+ ({t}=await classicSolo([[1,0,1,0]]));t.song.currentTime=1;key(t,'keydown','KeyA');key(t,'keydown','KeyD');key(t,'keydown','ArrowDown');assert.equal(t.api.state().perfect,2);assert.equal(t.api.state().combo,1,'a chord is one combo event');
+ ({t}=await classicSolo([[1,0,1,0]]));t.song.currentTime=1;key(t,'keydown','KeyA');key(t,'keydown','KeyS');key(t,'keydown','KeyD');key(t,'keydown','ArrowDown');assert.equal(t.api.state().perfect,0,'an extra fret on a chord does not count');
+});
+await check('Classic mode: frets may settle just after the strum, not later',async()=>{
+ let {t}=await classicSolo([[1,1,0,0]]);t.song.currentTime=1;key(t,'keydown','ArrowDown');assert.ok(t.api.state().soloPending);t.song.currentTime=1.03;key(t,'keydown','KeyS');assert.equal(t.api.state().perfect,1);assert.equal(t.api.state().soloPending,null);assert.equal(t.api.state().falsePresses,0);
+ ({t}=await classicSolo([[1,1,0,0]]));t.song.currentTime=1;key(t,'keydown','ArrowDown');t.song.currentTime=1.07;t.api.updateMechanics(.016);key(t,'keydown','KeyS');assert.equal(t.api.state().perfect,0);assert.equal(t.api.state().falsePresses,1);
+ ({t}=await classicSolo([[1,1,0,0],[3,1,0,0]]));t.song.currentTime=2;key(t,'keydown','KeyS');key(t,'keydown','ArrowDown');t.song.currentTime=2.1;t.api.updateMechanics(.016);assert.equal(t.api.state().falsePresses,1,'strumming with nothing in the window is an empty strum');
+});
+await check('Classic mode keeps touch and the Duo keyboard as tap input; Duo pads strum on the D-pad',async()=>{
+ let {t}=await classicSolo([[1,0,0,0]]);t.song.currentTime=1;t.touch(0).emit('pointerdown',{pointerId:70});assert.equal(t.api.state().perfect,1,'touch still taps');
+ t=await boot();t.api.preferences.inputMode='classic';t.api.setGameMode('duo');await t.api.startGame();const [p,q]=t.api.state().duoPlayers;chart(t,[[1,0,0,0]],p);chart(t,[[1,0,0,0]],q);t.song.currentTime=1;
+ key(t,'keydown','KeyQ');assert.equal(q.perfect,1,'Duo keyboard taps');
+ const pad0=pad(0);t.pads.push(pad0);pad0.buttons[6].pressed=true;t.api.pollGamepads(1000);assert.equal(p.perfect,0,'pad fret alone holds');
+ pad0.buttons[13].pressed=true;t.api.pollGamepads(1016);assert.equal(p.perfect,1,'D-pad strums');
+});
+await check('Key caps go fully down on the press and only the release is animated',async()=>{
+ const t=await boot();await t.api.startGame();chart(t,[[1,0,0,0]]);t.song.currentTime=1;key(t,'keydown','KeyD');assert.equal(t.api.state().fretDepth[0],1);t.api.updateMechanics(.016);assert.equal(t.api.state().fretDepth[0],1);
+ key(t,'keyup','KeyD');t.api.updateMechanics(.05);const d=t.api.state().fretDepth[0];assert.ok(d<1&&d>0,'released key rises smoothly');
+});
+await check('Calibration measures the median tap delay and needs enough taps on the beat',async()=>{
+ const {latencyFromTaps,CAL_PERIOD_MS}=await import(new URL('assets/js/ui/calibration.js',root).href);
+ const beats=Array.from({length:16},(_,i)=>1000+i*CAL_PERIOD_MS);
+ const taps=beats.map((b,i)=>b+[60,70,80,90,100][i%5]+(i===9?150:0));assert.equal(latencyFromTaps(beats,taps),80);
+ assert.equal(latencyFromTaps(beats,beats.slice(0,8).map(b=>b+50)),null,'warm-up taps alone are not enough');
+ assert.equal(latencyFromTaps(beats,beats.map(b=>b-25)),-25,'early tappers get a negative value');
+});
+await check('Audio latency shifts judgement, video latency only drawing; the V15 slider value migrates',async()=>{
+ let t=await boot({'whistles-nexus-v4-sync':'40'});assert.equal(t.api.preferences.audioLatency,-40);t.song.currentTime=5;assert.ok(Math.abs(t.api.clock.now()-5.04)<1e-9);
+ t=await boot({'the-whistles:preferences':JSON.stringify({audioLatency:100,videoLatency:30,inputMode:'classic'}),'whistles-nexus-v4-sync':'40'});
+ assert.equal(t.api.preferences.audioLatency,100,'saved preferences win over the old slider');assert.equal(t.api.preferences.inputMode,'classic');
+ await t.api.startGame();chart(t,[[1,0,0,0]]);t.song.currentTime=1.1;key(t,'keydown','KeyA');key(t,'keydown','ArrowDown');assert.equal(t.api.state().perfect,1,'a press 100 ms after the note sounds is on time');t.api.frame(1000);
+});
 export const results=passed;
 console.log(`${passed.length} integration checks passed:\n`+passed.map(x=>'✓ '+x).join('\n'));

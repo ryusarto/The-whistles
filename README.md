@@ -57,6 +57,7 @@ Os testes usam o código real com mídia e entradas simuladas. A verificação d
 - `assets/js/core/`: catálogo e formato dos mapas (`songs.js`), relógio da música (`clock.js`) e recordes (`records.js`).
 - `assets/js/rules/`: regras de pontuação, janelas e plateia (`scoring.js`) e julgamento das notas (`notes.js`).
 - `assets/js/input/bindings.js`: teclas e botões padrão.
+- `assets/js/ui/calibration.js`: teste guiado de atraso de áudio e vídeo.
 - `assets/css/game.css`: layout e áreas de toque por orientação.
 - `assets/audio/` e `assets/images/`: músicas e arte do The Whistles.
 - `tests/regression.mjs`: testes sem dependências.
