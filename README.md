@@ -41,7 +41,7 @@ Sem build ou dependências. Python 3.10+:
 python3 tools/serve.py
 ```
 
-Abra http://127.0.0.1:8765/. O servidor oferece HTTP Range para áudio. Para os testes do motor, Node.js 20+:
+Abra http://127.0.0.1:8765/. O jogo usa módulos ES e carrega os mapas em JSON, então precisa ser servido por HTTP (abrir o `index.html` direto do disco não funciona). O servidor oferece HTTP Range para áudio. Para os testes do motor, Node.js 20+:
 
 ```sh
 node tests/regression.mjs
@@ -51,8 +51,13 @@ Os testes usam o código real com mídia e entradas simuladas. A verificação d
 
 ## Arquivos e publicação
 
-- `index.html`: telas e mapas instrumentais.
-- `assets/js/game.js`: motor, toque, teclado, controles, áudio e recordes.
+- `index.html`: telas e interface.
+- `assets/songs/<id>.json`: mapas de cada música no formato 2 (ver `assets/songs/README.md`).
+- `assets/js/game.js`: telas, estado da partida, desenho da pista e roteamento das entradas.
+- `assets/js/core/`: catálogo e formato dos mapas (`songs.js`), relógio da música (`clock.js`) e recordes (`records.js`).
+- `assets/js/rules/`: regras de pontuação, janelas e plateia (`scoring.js`) e julgamento das notas (`notes.js`).
+- `assets/js/input/bindings.js`: teclas e botões padrão.
+- `assets/js/ui/calibration.js`: teste guiado de atraso de áudio e vídeo.
 - `assets/css/game.css`: layout e áreas de toque por orientação.
 - `assets/audio/` e `assets/images/`: músicas e arte do The Whistles.
 - `tests/regression.mjs`: testes sem dependências.
