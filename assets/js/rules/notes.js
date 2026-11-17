@@ -36,15 +36,45 @@ export function advanceHolds(holds, pressed, t, multiplier, award, { pointsPerSe
   }
 }
 
-// Closest unjudged note on a lane within the window, scanning forward from `from`.
-export function closestNote(notes, from, lane, t, window) {
-  let closest = null, best = window;
+const inWindow = (n, t, win) => n.t - t <= win.early && t - n.t <= win.late;
+
+// Closest unjudged note on a lane within the window { early, late }, scanning from `from`.
+export function closestNote(notes, from, lane, t, win) {
+  let closest = null, best = Infinity;
   for (let i = from; i < notes.length; i++) {
     const n = notes[i];
-    if (n.t > t + window) break;
-    if (n.hit || n.miss || n.lane !== lane) continue;
+    if (n.t - t > win.early) break;
+    if (n.hit || n.miss || n.lane !== lane || !inWindow(n, t, win)) continue;
     const d = Math.abs(n.t - t);
     if (d < best) { best = d; closest = n; }
   }
   return closest;
+}
+
+// Classic mode: the closest unjudged note group (single note or chord) a strum could hit.
+export function strumTarget(notes, from, t, win) {
+  let best = null, bestD = Infinity;
+  for (let i = from; i < notes.length; i++) {
+    const n = notes[i];
+    if (n.t - t > win.early) break;
+    if (n.hit || n.miss || !inWindow(n, t, win)) continue;
+    const d = Math.abs(n.t - t);
+    if (d < bestD) { bestD = d; best = n.group || n; }
+  }
+  if (!best) return null;
+  const members = [];
+  for (let i = from; i < notes.length; i++) {
+    const n = notes[i];
+    if (n.t - t > win.early) break;
+    if ((n.group || n) === best && !n.hit && !n.miss) members.push(n);
+  }
+  return { notes: members, frets: members.map(n => n.lane).sort((a, b) => a - b) };
+}
+
+// Classic mode fret check. Chords need exactly their frets. A single note needs its fret to be
+// the highest one held; lower frets may stay down (anchoring), higher ones may not.
+export function fretsMatch(held, frets) {
+  const down = [...held].sort((a, b) => a - b);
+  if (frets.length > 1) return down.length === frets.length && down.every((f, i) => f === frets[i]);
+  return down.length > 0 && down[down.length - 1] === frets[0];
 }

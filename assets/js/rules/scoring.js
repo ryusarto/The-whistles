@@ -8,8 +8,17 @@ export const POWER_SECONDS = 12;
 export const POWER_FULL = 100;
 export const CROWD_START = 76;
 
-// Seconds before or after the target time in which a press still counts.
-export const HIT_WINDOWS = { easy: 0.19, medium: 0.16, hard: 0.135 };
+// Seconds before (early) or after (late) the note in which a press still counts. Players
+// anticipate notes more often than they drag behind them, so the early side is wider.
+export const HIT_WINDOWS = {
+  easy: { early: 0.20, late: 0.16 },
+  medium: { early: 0.17, late: 0.135 },
+  hard: { early: 0.145, late: 0.115 },
+};
+// A note is counted as missed this long after its late window closes.
+export const MISS_GRACE = 0.015;
+// Classic mode: frets may settle this long after the strum and still count.
+export const FORM_TOLERANCE = 0.045;
 
 export function hitTier(delta) {
   const a = Math.abs(delta);

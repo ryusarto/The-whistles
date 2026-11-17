@@ -1,5 +1,14 @@
 # Histórico
 
+## V16 — Fase 1: sensação do botão (em desenvolvimento)
+
+- Janelas de acerto assimétricas: aceitam mais antecipação que atraso e apertam a cada dificuldade.
+- Modo Clássico (opção em Áudio & Vídeo): segure os trastes e palhete. Teclado do Solo: A S D F + ↑/↓. Controle: L2 L1 R1 R2 + direcional ↑/↓. Nota simples aceita trastes mais baixos apertados; acorde exige exatamente as pistas; os trastes podem se acomodar até 45 ms depois da palhetada. Palhetada sem nota certa conta como vazia. Toque na tela e teclado do Duo continuam no modo Toque.
+- Tecla afunda por completo no próprio aperto; só a volta é animada. Linha de acerto brilha a cada palhetada.
+- Atraso do áudio (muda o julgamento) e atraso do vídeo (muda só o desenho) separados, com teste guiado de 16 batidas para cada um. O ajuste antigo do menu de pausa é convertido automaticamente.
+- Cartões de opções rolam quando não cabem na tela.
+- 33 verificações nos testes.
+
 ## V16 — Fase 0: base técnica (em desenvolvimento)
 
 - Mapas fora do `index.html`: cada música tem `assets/songs/<id>.json` no formato 2 (notas com tempo, pistas e duração; acordes como lista de pistas). O `index.html` caiu de 118 KB para 17 KB.

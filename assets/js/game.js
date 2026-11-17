@@ -3,9 +3,10 @@
 import { loadSongs, compileChart, countNotes, upgradeCharts, DIFFICULTIES } from './core/songs.js';
 import { createMediaClock } from './core/clock.js';
 import { createRecordStore, mergeRecord, isImprovement } from './core/records.js';
-import { beginHit, missEvent, makeHold as makeHoldAt, advanceHolds as advanceHoldsWith, closestNote } from './rules/notes.js';
-import { POINTS_PER_NOTE, SUSTAIN_POINTS_PER_BEAT, POWER_SECONDS, POWER_FULL, CROWD_START, HIT_WINDOWS, CROWD, POWER_GAIN, hitTier, comboMultiplier as multiplierFor, starsFor, accuracyOf, isStreakMilestone } from './rules/scoring.js';
-import { SOLO_KEYS, DUO_KEYS, KEY_LABELS, PAD_FRETS, PAD_LABELS, PAD_BUTTON_COUNT, padPressed } from './input/bindings.js';
+import { beginHit, missEvent, makeHold as makeHoldAt, advanceHolds as advanceHoldsWith, closestNote, strumTarget, fretsMatch } from './rules/notes.js';
+import { POINTS_PER_NOTE, SUSTAIN_POINTS_PER_BEAT, POWER_SECONDS, POWER_FULL, CROWD_START, HIT_WINDOWS, MISS_GRACE, FORM_TOLERANCE, CROWD, POWER_GAIN, hitTier, comboMultiplier as multiplierFor, starsFor, accuracyOf, isStreakMilestone } from './rules/scoring.js';
+import { createCalibration } from './ui/calibration.js';
+import { SOLO_KEYS, DUO_KEYS, KEY_LABELS, CLASSIC_KEYS, CLASSIC_KEY_LABELS, STRUM_KEYS, PAD_FRETS, PAD_LABELS, PAD_STRUM, PAD_BUTTON_COUNT, padPressed } from './input/bindings.js';
 const $=id=>document.getElementById(id), canvas=$('stage'),song=$('song');
 let ctx=canvas.getContext('2d');
 const colors=['#e34a49','#ffc05e','#55b7f3','#f5efdf'];
@@ -19,13 +20,17 @@ function imFrom(tag){const im=new Image();im.src=tag==='franco-image'?'./assets/
 charSprites.franco=imFrom('franco-image');charSprites.ryuchi=imFrom('ryuchi-image');
 $('francoCard').src=charSprites.franco.src; $('ryuchiCard').src=charSprites.ryuchi.src;
 $('coverArt').src='./assets/images/capa.jpg';
-let screen='boot', chosen='franco', difficulty='medium', notes=[], nextMiss=0, running=false, offset=0;
+let screen='boot', chosen='franco', difficulty='medium', notes=[], nextMiss=0, running=false;
 let score=0,combo=0,bestCombo=0,perfect=0,good=0,misses=0,falsePresses=0, maxHits=0,crowd=CROWD_START,power=0,powerEnd=0,activeHolds=[],particles=[],keys=new Set(),flash={text:'',until:0,color:'#fff'},streakNoticeUntil=0,streakNoticeValue=0,record=false;
 let lastHud=0, lastTime=0, pausePending=false, lastRendered=0;
 let startRequest=0, overlayReturn='boot', resumeGraceUntil=0;
 const difficultyNames={easy:'FÁCIL',medium:'MÉDIO',hard:'DIFÍCIL'};
 const soloSources=Array.from({length:4},()=>new Set());
-const preferences={volume:.8,effects:matchMedia('(prefers-reduced-motion: reduce)').matches?'reduced':'full'};
+// audioLatency/videoLatency in ms: how late sound and picture reach the player (see ui/calibration.js).
+const preferences={volume:.8,effects:matchMedia('(prefers-reduced-motion: reduce)').matches?'reduced':'full',inputMode:'tap',audioLatency:0,videoLatency:0};
+// Classic mode: hold frets, strum to play. Touch and the Duo keyboard always play by tapping.
+const classic=()=>preferences.inputMode==='classic';
+let soloPending=null,strumGlow=0;
 const fretGlow=new Float32Array(4), fretImpact=new Float32Array(4), fretPress=new Float32Array(4), fretDepth=new Float32Array(4);
 let impactCount=0;
 // The original solo game is preserved. The two-player engine runs parallel charts on one song clock.
@@ -52,7 +57,7 @@ function setGameMode(mode){
  document.querySelectorAll('[data-select-character]').forEach(b=>b.disabled=gameMode==='duo');
  document.querySelectorAll('.charcard').forEach(el=>{const selected=gameMode==='duo'||el.dataset.character===chosen;el.classList.toggle('selected',selected);el.setAttribute('aria-pressed',String(selected))});
  $('setupHeading').textContent=gameMode==='duo'?'BAND CO-OP · 2 PLAYERS':'CHOOSE YOUR ROCKSTAR';
- $('setupControlsHint').textContent=gameMode==='duo'?'P1 D F J K + ESPAÇO · P2 Q W O P + ENTER · PS5: L2 L1 R1 R2 + ✕':'D F J K / PS5 L2 L1 R1 R2 · ESPAÇO / ✕ = ESPECIAL';
+ $('setupControlsHint').textContent=controlsHint();
  updateSelection();renderSetlist();refreshControllerStatus(true);
 }
 document.querySelectorAll('[data-game-mode]').forEach(b=>b.onclick=()=>setGameMode(b.dataset.gameMode));
@@ -117,7 +122,7 @@ function advanceHolds(holds,pressed,t,multiplier,award){
 }
 function makeDuoPlayer(artist,index){
  const all=compileNotes(activeTrack.charts[artist][difficulty]);
- return {artist,index,name:artist==='franco'?'FRANCO':'RYUCHI',notes:all,nextMiss:0,maxHits:all.length,score:0,combo:0,bestCombo:0,perfect:0,good:0,misses:0,falsePresses:0,power:0,powerEnd:0,keys:new Set(),sources:Array.from({length:4},()=>new Set()),holds:[],glow:new Float32Array(4),impact:new Float32Array(4),depth:new Float32Array(4),particles:[],flashText:'',flashColor:'#fff',flashUntil:0};
+ return {artist,index,name:artist==='franco'?'FRANCO':'RYUCHI',notes:all,nextMiss:0,maxHits:all.length,score:0,combo:0,bestCombo:0,perfect:0,good:0,misses:0,falsePresses:0,power:0,powerEnd:0,keys:new Set(),sources:Array.from({length:4},()=>new Set()),holds:[],glow:new Float32Array(4),impact:new Float32Array(4),depth:new Float32Array(4),particles:[],flashText:'',flashColor:'#fff',flashUntil:0,pending:null,strumGlow:0};
 }
 function initDuoChart(){
  duoPlayers=[makeDuoPlayer('franco',0),makeDuoPlayer('ryuchi',1)];
@@ -125,16 +130,18 @@ function initDuoChart(){
 }
 function duoMultiplier(p){return multiplierFor(p.combo)*(p.powerEnd>now()?2:1)}
 // `at` is the input event's timestamp (ms, performance.now() timeline) when known.
-function duoPress(p,lane,source,at){
+// judge=false holds the fret without playing it (Classic mode frets).
+function duoPress(p,lane,source,at,judge=true){
  if(!p||screen!=='playing'||song.paused||p.sources[lane].has(source))return;
  const held=p.sources[lane].size>0;
- p.sources[lane].add(source);p.keys.add(lane);p.depth[lane]=Math.max(p.depth[lane],.2);
- if(!held)duoHitLane(p,lane,at);
+ p.sources[lane].add(source);p.keys.add(lane);p.depth[lane]=1;
+ if(held)return;
+ if(judge)duoHitLane(p,lane,at);else duoFretChanged(p);
 }
 function duoRelease(p,lane,source){
  if(!p)return;
  p.sources[lane].delete(source);
- if(p.sources[lane].size===0)p.keys.delete(lane);
+ if(p.sources[lane].size===0){p.keys.delete(lane);if(p.pending)duoFretChanged(p)}
 }
 function clearDuoInputs(preserveHolds=false){for(const p of duoPlayers){p.keys.clear();for(const s of p.sources)s.clear();if(!preserveHolds)p.holds=[];p.depth.fill(0)}}
 function clearInputs(preserveHolds=false){soloKeyboardHeld.clear();soloPadHeld.clear();for(const sources of soloSources)sources.clear();pointerTouches.clear();document.querySelectorAll('[data-touch-lane]').forEach(b=>b.classList.remove('is-held'));keys.clear();fretPress.fill(0);clearDuoInputs(preserveHolds);if(!preserveHolds)activeHolds=[];}
@@ -163,15 +170,35 @@ function duoHitLane(p,lane,at){
  p.glow[lane]=Math.max(p.glow[lane],.32);
  const closest=closestNote(p.notes,p.nextMiss,lane,t,hitWindow());
  if(closest)duoRegisterHit(p,closest,t-closest.t);
- else{p.falsePresses++;p.combo=0;crowd=Math.max(0,crowd-CROWD.duo.empty[difficulty]);p.impact[lane]=.3;if(p.particles.length>=12)p.particles.shift();p.particles.push({x:duoLaneX(lane,585,p.index),y:585,col:'#f66',birth:performance.now(),tier:'EMPTY',score:0});duoFlash(p,'APERTO VAZIO','#f66');if(crowd<=0)failShow();}
+ else duoEmpty(p,lane,'APERTO VAZIO');
+}
+function duoEmpty(p,lane,label){p.falsePresses++;p.combo=0;crowd=Math.max(0,crowd-CROWD.duo.empty[difficulty]);p.impact[lane]=.3;if(p.particles.length>=12)p.particles.shift();p.particles.push({x:duoLaneX(lane,585,p.index),y:585,col:'#f66',birth:performance.now(),tier:'EMPTY',score:0});duoFlash(p,label,'#f66');if(crowd<=0)failShow();}
+// Classic mode. A strum plays the closest note group if the held frets match it; otherwise it
+// waits FORM_TOLERANCE for the frets to settle before counting as an empty strum.
+function judgeStrum(list,from,held,t,hit){
+ const target=strumTarget(list,from,t,hitWindow());
+ if(!target||!fretsMatch(held,target.frets))return false;
+ for(const n of target.notes)hit(n,t-n.t);
+ return true;
+}
+const topFret=held=>held.size?Math.max(...held):0;
+function duoStrum(p,at){
+ if(!p||screen!=='playing'||song.paused)return;
+ p.strumGlow=1;const t=clock.at(at);
+ if(p.pending){p.pending=null;duoEmpty(p,topFret(p.keys),'PALHETADA VAZIA');}
+ if(!judgeStrum(p.notes,p.nextMiss,p.keys,t,(n,d)=>duoRegisterHit(p,n,d)))p.pending={t,until:t+FORM_TOLERANCE};
+}
+function duoFretChanged(p){
+ if(p.pending&&now()<=p.pending.until&&judgeStrum(p.notes,p.nextMiss,p.keys,p.pending.t,(n,d)=>duoRegisterHit(p,n,d)))p.pending=null;
 }
 function duoActivatePower(p){if(!p||screen!=='playing'||p.power<POWER_FULL||p.powerEnd>now())return;p.power=0;p.powerEnd=now()+POWER_SECONDS;duoFlash(p,'WHISTLE MODE ×2','#dfb9ff');updateHud(true)}
 function updateDuoMechanics(dt){
- for(const p of duoPlayers){for(let q=0;q<4;q++){p.glow[q]=Math.max(0,p.glow[q]-dt*2.5);p.impact[q]=Math.max(0,p.impact[q]-dt*4);const down=p.keys.has(q);p.depth[q]+=(Number(down)-p.depth[q])*(1-Math.exp(-(down?35:18)*dt))}}
+ for(const p of duoPlayers){p.strumGlow=Math.max(0,p.strumGlow-dt*6);for(let q=0;q<4;q++){p.glow[q]=Math.max(0,p.glow[q]-dt*2.5);p.impact[q]=Math.max(0,p.impact[q]-dt*4);const down=p.keys.has(q);if(!down)p.depth[q]+=(0-p.depth[q])*(1-Math.exp(-18*dt))}}
  if(screen!=='playing'||song.paused)return;
  const t=now();if(song.currentTime>=Math.max(0,(song.duration||activeTrack.duration)-.08)){song.pause();finishGame();return;}
  for(const p of duoPlayers){
-  while(p.nextMiss<p.notes.length){const n=p.notes[p.nextMiss];if(n.t>t-hitWindow()-.015)break;if(!n.hit&&!n.miss)duoRegisterMiss(p,n);p.nextMiss++;if(screen!=='playing')return}
+  if(p.pending&&t>p.pending.until){p.pending=null;duoEmpty(p,topFret(p.keys),'PALHETADA VAZIA');if(screen!=='playing')return}
+  while(p.nextMiss<p.notes.length){const n=p.notes[p.nextMiss];if(n.t>t-hitWindow().late-MISS_GRACE)break;if(!n.hit&&!n.miss)duoRegisterMiss(p,n);p.nextMiss++;if(screen!=='playing')return}
   advanceHolds(p.holds,p.keys,t,()=>duoMultiplier(p),points=>{p.score+=points;hudDirty=true;});
  }
  score=duoPlayers.reduce((v,p)=>v+p.score,0);
@@ -214,7 +241,7 @@ function finishDuo(){
  show('results');
 }
 function initChart(){notes=compileNotes(songChart());nextMiss=0;maxHits=notes.length;}
-function resetStats(){clearInputs();score=0;combo=0;bestCombo=0;perfect=0;good=0;misses=0;falsePresses=0;crowd=CROWD_START;power=0;powerEnd=0;streakNoticeUntil=0;streakNoticeValue=0;particles=[];keys.clear();fretGlow.fill(0);fretImpact.fill(0);fretPress.fill(0);fretDepth.fill(0);activeHolds=[];flash.until=0;lastHud=0;lastTime=0;}
+function resetStats(){clearInputs();score=0;combo=0;bestCombo=0;perfect=0;good=0;misses=0;falsePresses=0;crowd=CROWD_START;power=0;powerEnd=0;streakNoticeUntil=0;streakNoticeValue=0;soloPending=null;strumGlow=0;particles=[];keys.clear();fretGlow.fill(0);fretImpact.fill(0);fretPress.fill(0);fretDepth.fill(0);activeHolds=[];flash.until=0;lastHud=0;lastTime=0;}
 function enterSelection(){if(!song.paused)song.pause();show('setup');updateSelection()}
 $('startMenu').onclick=enterSetlist;
 document.querySelectorAll('.charcard').forEach(el=>el.onclick=()=>{
@@ -259,10 +286,7 @@ $('playNow').onclick=startGame;$('againBtn').onclick=restartSession;$('selectBtn
 function pauseGame(){if(screen!=='playing')return;song.pause();running=false;clearInputs(true);show('pause')}
 async function resumeGame(){if(screen!=='pause')return;const request=++startRequest;show('loading');try{if(song.readyState<1)song.addEventListener('loadedmetadata',()=>{if(request===startRequest)song.currentTime=0},{once:true});const p=song.play();if(p&&p.then)await p;if(request!==startRequest)return;if(document.hidden){song.pause();show('pause');return;}resumeGraceUntil=now()+.3;running=true;$('audioError').style.display='none';show('playing')}catch(e){if(request!==startRequest)return;show('pause');$('audioError').style.display='block';$('audioError').textContent='Não foi possível reproduzir o áudio: '+e.message}}
 $('pauseBtn').onclick=pauseGame;$('resumeBtn').onclick=resumeGame;$('restartBtn').onclick=restartSession;$('menuBtn').onclick=enterSetlist;
-try { const savedOffset=Number(localStorage.getItem('whistles-nexus-v4-sync')||0);offset=Number.isFinite(savedOffset)?Math.max(-200,Math.min(200,savedOffset)):0; } catch(e) { offset=0; }
-$('offset').value=String(offset); $('offsetValue').textContent=(offset>0?'+':'')+offset+' ms';
-$('offset').oninput=()=>{offset=Number($('offset').value);$('offsetValue').textContent=(offset>0?'+':'')+offset+' ms';try{localStorage.setItem('whistles-nexus-v4-sync',String(offset))}catch(e){}};
-const clock=createMediaClock(song,()=>offset/1000);
+const clock=createMediaClock(song,()=>-preferences.audioLatency/1000);
 function now(){return clock.now()}
 function comboMultiplier(){return multiplierFor(combo)}
 function isSpecial(){return powerEnd>0 && now()<powerEnd}
@@ -298,19 +322,31 @@ function hitLane(lane,at){
  fretGlow[lane]=Math.max(fretGlow[lane],.32);fretPress[lane]=1;
  const closest=closestNote(notes,nextMiss,lane,t,hitWindow());
  if(closest){registerHit(closest,t-closest.t)}
- else{falsePresses++;combo=0;crowd=Math.max(0,crowd-CROWD.solo.empty[difficulty]);if(particles.length>=18)particles.shift();particles.push({x:laneX(lane,607),y:607,col:'#ed4949',birth:performance.now(),tier:'EMPTY'});fretImpact[lane]=.18;showFlash('APERTO VAZIO!','#fa6565');updateHud(true);if(crowd<=0)failShow()}
+ else soloEmpty(lane,'APERTO VAZIO!');
+}
+function soloEmpty(lane,label){falsePresses++;combo=0;crowd=Math.max(0,crowd-CROWD.solo.empty[difficulty]);if(particles.length>=18)particles.shift();particles.push({x:laneX(lane,607),y:607,col:'#ed4949',birth:performance.now(),tier:'EMPTY'});fretImpact[lane]=.18;showFlash(label,'#fa6565');updateHud(true);if(crowd<=0)failShow()}
+function soloStrum(at){
+ if(screen!=='playing'||song.paused)return;
+ strumGlow=1;const t=clock.at(at);
+ if(soloPending){soloPending=null;soloEmpty(topFret(keys),'PALHETADA VAZIA!');}
+ if(!judgeStrum(notes,nextMiss,keys,t,registerHit))soloPending={t,until:t+FORM_TOLERANCE};
+}
+function soloFretChanged(){
+ if(soloPending&&now()<=soloPending.until&&judgeStrum(notes,nextMiss,keys,soloPending.t,registerHit))soloPending=null;
 }
 function activatePower(){if(screen!=='playing'||power<POWER_FULL||isSpecial())return;power=0;powerEnd=now()+POWER_SECONDS;showFlash('WHISTLE MODE ×2!', '#f2d2ff');updateHud(true)}
 const keyLanes=SOLO_KEYS;
 const pointerTouches=new Map();
-function soloPress(lane,source,at){
+// The key cap goes fully down on the press itself; only the release is animated.
+function soloPress(lane,source,at,judge=true){
  if(screen!=='playing'||song.paused||soloSources[lane].has(source))return;
  const held=soloSources[lane].size>0;
- soloSources[lane].add(source);keys.add(lane);fretPress[lane]=1;fretDepth[lane]=Math.max(.22,fretDepth[lane]);
- if(!held)hitLane(lane,at);
+ soloSources[lane].add(source);keys.add(lane);fretPress[lane]=1;fretDepth[lane]=1;
+ if(held)return;
+ if(judge)hitLane(lane,at);else soloFretChanged();
 }
-function soloRelease(lane,source){soloSources[lane].delete(source);if(!soloSources[lane].size){keys.delete(lane);fretPress[lane]=0}}
-function pressSoloPad(lane,at){soloPadHeld.add(lane);soloPress(lane,'pad',at)}
+function soloRelease(lane,source){soloSources[lane].delete(source);if(!soloSources[lane].size){keys.delete(lane);fretPress[lane]=0;if(soloPending)soloFretChanged()}}
+function pressSoloPad(lane,at){soloPadHeld.add(lane);soloPress(lane,'pad',at,!classic())}
 function releaseSoloPad(lane){soloPadHeld.delete(lane);soloRelease(lane,'pad')}
 function getPads(){try{return navigator.getGamepads?Array.from(navigator.getGamepads()).filter(p=>p&&p.connected):[]}catch(e){return []}}
 function connectedPadForSlot(slot,pads=getPads()){return pads.find(p=>p.index===gamepadAssigned[slot])||null}
@@ -428,7 +464,9 @@ function pollGamepads(ms){
   // Gamepad.timestamp marks when the pad state changed, which is closer to the press than this frame.
   const at=p.timestamp;
   const slot=gamepadAssigned.indexOf(p.index);
-  if(screen==='controllers'){
+  if(screen==='calibration'){
+   if(next.some((v,i)=>v&&!prev[i]))calibration.tap(at);
+  }else if(screen==='controllers'){
    if(next[0]&&!prev[0]){
     assignPad(p.index,pairSlot);
     // advance to the next missing slot after a successful pair
@@ -441,7 +479,7 @@ function pollGamepads(ms){
     for(let lane=0;lane<4;lane++){
      const b=dualSenseFrets[lane];
      if(next[b]&&!prev[b]){
-      if(gameMode==='duo')duoPress(duoPlayers[slot],lane,source,at);
+      if(gameMode==='duo')duoPress(duoPlayers[slot],lane,source,at,!classic());
       else if(slot===0)pressSoloPad(lane,at);
      }else if(!next[b]&&prev[b]){
       if(gameMode==='duo')duoRelease(duoPlayers[slot],lane,source);
@@ -451,6 +489,7 @@ function pollGamepads(ms){
     if(next[0]&&!prev[0]){
      if(gameMode==='duo')duoActivatePower(duoPlayers[slot]);else if(slot===0)activatePower();
     }
+    if(classic())for(const b of PAD_STRUM)if(next[b]&&!prev[b]){if(gameMode==='duo')duoStrum(duoPlayers[slot],at);else if(slot===0)soloStrum(at)}
    }else{
     for(let lane=0;lane<4;lane++){
      if(gameMode==='duo')duoRelease(duoPlayers[slot],lane,source);
@@ -471,12 +510,15 @@ function pollGamepads(ms){
  if(screen==='controllers')renderControllerPanel(pads);
  if(ms-lastGamepadStatus>650){lastGamepadStatus=ms;refreshControllerStatus()}
 }
+// Solo keyboard lanes depend on the mode; the Duo keyboard always taps D F J K / Q W O P.
+const soloKeyMap=()=>gameMode==='solo'&&classic()?CLASSIC_KEYS:keyLanes;
 document.addEventListener('keydown',e=>{
+ if(screen==='calibration'&&e.code!=='Escape'){if(!e.repeat&&!e.target?.matches?.('button,select,input'))calibration.tap(e.timeStamp);return}
  if(e.target?.matches?.('input,select,textarea,button')&&screen!=='playing'&&e.code!=='Escape')return;
- const k1=keyLanes[e.code],k2=coopKeyboard[1][e.code];
+ const k1=soloKeyMap()[e.code],k2=coopKeyboard[1][e.code];
  if(['Space','ArrowUp','ArrowDown','Escape'].includes(e.code)||k1!==undefined||gameMode==='duo'&&k2!==undefined)e.preventDefault();
  if(e.repeat)return;
- if(e.code==='Escape'||(gameMode==='solo'&&e.code==='KeyP')){if(['help','settings'].includes(screen)){closeOverlay();return;}if(screen==='loading'){enterSetlist();return;}if(screen==='controllers')closeControllerPanel();else if(screen==='playing')pauseGame();else if(screen==='pause')resumeGame();return}
+ if(e.code==='Escape'||(gameMode==='solo'&&e.code==='KeyP')){if(screen==='calibration'){closeCalibration();return}if(['help','settings'].includes(screen)){closeOverlay();return;}if(screen==='loading'){enterSetlist();return;}if(screen==='controllers')closeControllerPanel();else if(screen==='playing')pauseGame();else if(screen==='pause')resumeGame();return}
  if(screen==='boot'&&e.code==='Enter'){enterSetlist();return}
  if(screen==='setup'&&e.code==='Enter'){startGame();return}
  if(screen==='results'&&e.code==='Enter'){restartSession();return}
@@ -488,11 +530,12 @@ document.addEventListener('keydown',e=>{
   if(k2!==undefined)duoPress(duoPlayers[1],k2,'key:'+e.code,e.timeStamp);
  }else{
   if(e.code==='Space'){activatePower();return}
-  if(k1!==undefined){soloKeyboardHeld.add(k1);soloPress(k1,'keyboard',e.timeStamp)}
+  if(classic()&&STRUM_KEYS.has(e.code)){soloStrum(e.timeStamp);return}
+  if(k1!==undefined){soloKeyboardHeld.add(k1);soloPress(k1,'keyboard',e.timeStamp,!classic())}
  }
 });
 document.addEventListener('keyup',e=>{
- const k1=keyLanes[e.code],k2=coopKeyboard[1][e.code];
+ const k1=soloKeyMap()[e.code],k2=coopKeyboard[1][e.code];
  if(gameMode==='duo'){
   if(k1!==undefined)duoRelease(duoPlayers[0],k1,'key:'+e.code);
   if(k2!==undefined)duoRelease(duoPlayers[1],k2,'key:'+e.code);
@@ -564,14 +607,15 @@ function updateMechanics(dt){
  for(let q=0;q<4;q++){
   fretGlow[q]=Math.max(0,fretGlow[q]-dt*2.5);
   fretImpact[q]=Math.max(0,fretImpact[q]-dt*4);
-  const down=keys.has(q),target=Number(down);
-  fretDepth[q]+=(target-fretDepth[q])*(1-Math.exp(-(down?35:18)*dt));
+  if(!keys.has(q))fretDepth[q]+=(0-fretDepth[q])*(1-Math.exp(-18*dt));
  }
+ strumGlow=Math.max(0,strumGlow-dt*6);
  if(screen!=='playing'||song.paused)return;
  const t=now();
  if(song.currentTime>=Math.max(0,(song.duration||activeTrack.duration)-.08)){song.pause();finishGame();return;}
+ if(soloPending&&t>soloPending.until){soloPending=null;soloEmpty(topFret(keys),'PALHETADA VAZIA!');if(screen!=='playing')return}
  while(nextMiss<notes.length){
-  const n=notes[nextMiss];if(n.t>t-hitWindow()-.015)break;
+  const n=notes[nextMiss];if(n.t>t-hitWindow().late-MISS_GRACE)break;
   if(!n.hit&&!n.miss)registerMiss(n);
   nextMiss++;if(screen!=='playing')return;
  }
@@ -818,6 +862,7 @@ function renderDuoHighway(p,t,ms){
  rect(cx-duoHW(hitY)/2,hitY-8,duoHW(hitY),13,'#0b0b11');
  ctx.shadowColor=powerOn?'#da95ff':'#f4d7b8';ctx.shadowBlur=14;
  rect(cx-duoHW(hitY)/2,hitY-8,duoHW(hitY),3,powerOn?'#e1bbff':'#efdbc5');ctx.shadowBlur=0;
+ if(p.strumGlow>.02){ctx.globalAlpha=p.strumGlow*.55;rect(cx-duoHW(hitY)/2,hitY-9,duoHW(hitY),6,'#fff4dc');ctx.globalAlpha=1;}
  const visible=[];
  for(let i=p.nextMiss;i<p.notes.length;i++){
   const n=p.notes[i],dt=n.t-t;
@@ -882,6 +927,7 @@ function renderHighway(t,ms){
  rect(640-hw(hitY)/2,hitY-8,hw(hitY),15,'#090a0f');
  ctx.save();ctx.shadowColor=powerOn?'#e4c5fc':'#d5bfa4';ctx.shadowBlur=17;
  rect(640-hw(hitY)/2,hitY-8,hw(hitY),3,powerOn?'#e8cbff':'#f3dcc2');ctx.restore();
+ if(strumGlow>.02){ctx.save();ctx.globalAlpha=strumGlow*.55;ctx.shadowColor='#fff4dc';ctx.shadowBlur=18;rect(640-hw(hitY)/2,hitY-9,hw(hitY),6,'#fff4dc');ctx.restore();}
  // accurate audio-clock projection; draw distant notes first
  const visible=[];
  for(let i=nextMiss;i<notes.length;i++){
@@ -904,7 +950,7 @@ function renderHighway(t,ms){
   const pulse=Math.max(fretGlow[lane],fretImpact[lane]);
   drawFretPad(x,hitY+17,rx,colors[lane],depth,pulse);
   ctx.save();ctx.shadowColor='#060709';ctx.shadowBlur=4;
-  text(KEY_LABELS[lane],x,hitY+83,20,'#eee4d9','center');ctx.restore();
+  text((classic()?CLASSIC_KEY_LABELS:KEY_LABELS)[lane],x,hitY+83,20,'#eee4d9','center');ctx.restore();
  }
  // physical hit shockwaves disappear with time, not frame count
  for(let i=particles.length-1;i>=0;i--){
@@ -937,7 +983,7 @@ function frame(ms){
  const dt=Math.min(.07,(ms-lastRendered)/1000||.016);lastRendered=ms;
  pollGamepads(ms);
  if(screen==='playing')updateMechanics(dt);
- const t=(screen==='playing'||screen==='pause'||screen==='results')?now():ms/1000;
+ const t=(screen==='playing'||screen==='pause'||screen==='results')?now()+preferences.videoLatency/1000:ms/1000;
  ctx.clearRect(0,0,1280,720);
  if(screen==='playing'||screen==='pause'){
   renderStageCached(ms,Math.max(0,t));
@@ -992,8 +1038,25 @@ $('importAudio').onchange=async e=>{
 
 
 function savePreferences(){try{localStorage.setItem('the-whistles:preferences',JSON.stringify(preferences))}catch(e){}}
-function applyPreferences(){song.volume=preferences.volume;$('game').classList.toggle('reduced-effects',preferences.effects==='reduced');$('volume').value=String(Math.round(preferences.volume*100));$('volumeValue').textContent=Math.round(preferences.volume*100)+'%';$('visualEffects').value=preferences.effects;}
-try{const saved=JSON.parse(localStorage.getItem('the-whistles:preferences')||'null');if(saved){if(Number.isFinite(saved.volume))preferences.volume=Math.max(0,Math.min(1,saved.volume));if(['full','reduced'].includes(saved.effects))preferences.effects=saved.effects;}}catch(e){}
+const fmtMs=v=>(v>0?'+':'')+v+' ms';
+function controlsHint(){
+ if(gameMode==='duo')return classic()?'P1 D F J K + ESPAÇO · P2 Q W O P + ENTER · CONTROLE: SEGURE L2 L1 R1 R2 E PALHETE NO DIRECIONAL ↑↓ · ✕ = ESPECIAL':'P1 D F J K + ESPAÇO · P2 Q W O P + ENTER · PS5: L2 L1 R1 R2 + ✕';
+ return classic()?'CLÁSSICO: SEGURE A S D F E PALHETE COM ↑ OU ↓ / PS5: L2 L1 R1 R2 + DIRECIONAL ↑↓ · ESPAÇO / ✕ = ESPECIAL':'D F J K / PS5 L2 L1 R1 R2 · ESPAÇO / ✕ = ESPECIAL';
+}
+function applyPreferences(){
+ song.volume=preferences.volume;$('game').classList.toggle('reduced-effects',preferences.effects==='reduced');
+ $('volume').value=String(Math.round(preferences.volume*100));$('volumeValue').textContent=Math.round(preferences.volume*100)+'%';$('visualEffects').value=preferences.effects;
+ $('inputMode').value=preferences.inputMode;
+ $('inputModeHint').textContent=classic()?'Segure os trastes (A S D F no teclado, L2 L1 R1 R2 no controle) e palhete com ↑/↓ ou o direcional. Notas simples aceitam trastes mais baixos apertados; acordes exigem exatamente as pistas. A tela de toque e o teclado do Duo continuam tocando por toque.':'Apertar a pista toca a nota (D F J K, L2 L1 R1 R2 ou toque na tela).';
+ $('audioLatency').value=String(preferences.audioLatency);$('audioLatencyValue').textContent=fmtMs(preferences.audioLatency);
+ $('videoLatency').value=String(preferences.videoLatency);$('videoLatencyValue').textContent=fmtMs(preferences.videoLatency);
+ $('setupControlsHint').textContent=controlsHint();
+}
+const clampMs=(v,lo,hi)=>Number.isFinite(v)?Math.max(lo,Math.min(hi,Math.round(v))):0;
+try{const saved=JSON.parse(localStorage.getItem('the-whistles:preferences')||'null');if(saved){if(Number.isFinite(saved.volume))preferences.volume=Math.max(0,Math.min(1,saved.volume));if(['full','reduced'].includes(saved.effects))preferences.effects=saved.effects;if(['tap','classic'].includes(saved.inputMode))preferences.inputMode=saved.inputMode;if('audioLatency'in saved)preferences.audioLatency=clampMs(saved.audioLatency,-100,300);if('videoLatency'in saved)preferences.videoLatency=clampMs(saved.videoLatency,-100,200);}
+ // V15 kept one sync slider whose value was added to the song time; it becomes the audio latency.
+ if(!saved||!('audioLatency'in saved)){const old=Number(localStorage.getItem('whistles-nexus-v4-sync'));if(Number.isFinite(old)&&old)preferences.audioLatency=clampMs(-old,-100,300);}
+}catch(e){}
 applyPreferences();
 function openOverlay(name){if(screen==='playing')pauseGame();overlayReturn=screen;show(name)}
 function closeOverlay(){show(overlayReturn)}
@@ -1002,6 +1065,20 @@ document.querySelectorAll('[data-open-settings]').forEach(b=>b.onclick=()=>openO
 $('closeHelp').onclick=closeOverlay;$('closeSettings').onclick=closeOverlay;
 $('volume').oninput=()=>{preferences.volume=Number($('volume').value)/100;applyPreferences();savePreferences()};
 $('visualEffects').onchange=()=>{preferences.effects=$('visualEffects').value;applyPreferences();savePreferences()};
+$('inputMode').onchange=()=>{preferences.inputMode=$('inputMode').value==='classic'?'classic':'tap';clearInputs(true);applyPreferences();savePreferences()};
+$('audioLatency').oninput=()=>{preferences.audioLatency=Number($('audioLatency').value);applyPreferences();savePreferences()};
+$('videoLatency').oninput=()=>{preferences.videoLatency=Number($('videoLatency').value);applyPreferences();savePreferences()};
+const calibration=createCalibration({canvas:$('calibrationCanvas'),status:$('calibrationStatus'),onResult:(kind,ms)=>{
+ if(ms===null)return;
+ if(kind==='audio')preferences.audioLatency=clampMs(ms,-100,300);else preferences.videoLatency=clampMs(ms,-100,200);
+ applyPreferences();savePreferences();
+}});
+function closeCalibration(){calibration.stop();show('settings')}
+$('openCalibration').onclick=()=>{show('calibration');$('calibrationStatus').textContent='Escolha um teste.'};
+$('calibrateAudio').onclick=()=>calibration.start('audio');
+$('calibrateVideo').onclick=()=>calibration.start('video');
+$('closeCalibration').onclick=closeCalibration;
+$('calibrationTap').addEventListener('pointerdown',e=>{e.preventDefault();calibration.tap(e.timeStamp)});
 $('cancelLoading').onclick=enterSetlist;
 $('touchPower1').onclick=()=>{if(gameMode==='duo')duoActivatePower(duoPlayers[0]);else activatePower()};
 $('touchPower2').onclick=()=>duoActivatePower(duoPlayers[1]);
@@ -1017,7 +1094,7 @@ window.whistlesDebug={
 // Internal handles for tests/regression.mjs. Not reachable from the page: modules expose
 // nothing on window except the read-only diagnostics above.
 export function __testApi(){
- return {startGame,restartSession,pauseGame,resumeGame,enterSetlist,finishGame,updateMechanics,hitLane,soloPress,soloRelease,duoPress,duoRelease,updateDuoMechanics,registerHit,registerMiss,duoRegisterHit,duoRegisterMiss,failShow,compileNotes,setGameMode,frame,clearInputs,touchPress,releasePointer,beginHit,missEvent,makeHold,advanceHolds,pollGamepads,laneX,duoLaneX,clock,
-  state:()=>({screen,gameMode,score,combo,bestCombo,crowd,maxHits,nextMiss,notes,duoPlayers,misses,keys,soloKeyboardHeld,soloPadHeld,soloSources,pointerTouches,activeHolds,perfect,good,falsePresses,difficulty}),
+ return {startGame,restartSession,pauseGame,resumeGame,enterSetlist,finishGame,updateMechanics,hitLane,soloPress,soloRelease,duoPress,duoRelease,updateDuoMechanics,registerHit,registerMiss,duoRegisterHit,duoRegisterMiss,failShow,compileNotes,setGameMode,frame,clearInputs,touchPress,releasePointer,beginHit,missEvent,makeHold,advanceHolds,pollGamepads,laneX,duoLaneX,clock,soloStrum,duoStrum,preferences,applyPreferences,calibration,
+  state:()=>({screen,gameMode,score,combo,bestCombo,crowd,maxHits,nextMiss,notes,duoPlayers,misses,keys,soloKeyboardHeld,soloPadHeld,soloSources,pointerTouches,activeHolds,perfect,good,falsePresses,difficulty,soloPending,fretDepth}),
   configure:(v)=>{if('track'in v)activeTrack=catalog.find(t=>t.id===v.track);if('artist'in v)chosen=v.artist;if('difficulty'in v)difficulty=v.difficulty;if('crowd'in v)crowd=v.crowd;if('combo'in v)combo=v.combo;if('notes'in v){notes=v.notes;nextMiss=0;maxHits=notes.length;}if('maxHits'in v)maxHits=v.maxHits;}};
 }
